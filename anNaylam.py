@@ -58,7 +58,7 @@ VS_CONTROL_FLOW = {
 
 VS_KEYWORDS = {
     "global", "nonlocal", "pass", 
-    "True", "False", "None", 
+    "True", "False", "none", 
     "and", "or", "not", "is", "in", "async", "await"
 }
 
@@ -99,10 +99,55 @@ DELIMITER = {
 }
 
 
+def ListIdx(listObject : list, target):
+    try:
+        idx = listObject.index(target)
+    except ValueError:
+        idx = None
+
+    return idx
+
+
 class LineIndent(Enum):
     Indent = auto()
     Dedent = auto()
     Keep   = auto()
+
+
+class Delimiter:
+    def __init__(self, id, ch, start, end):
+        self.id        = id
+        self.delimiter = ch
+        self.start     = start
+        self.end       = end
+
+
+class DelimitterArray:
+    def __init__(self):
+        self.Dlist : list[Delimiter] = []
+
+    def __iter__(self):
+        return iter(self.Dlist)
+
+    def __len__(self):
+        return len(self.Dlist)
+
+    def __getitem__(self, key):
+        return self.Dlist[key]
+
+    def append(self, item : Delimiter):
+        self.Dlist.append(item)
+
+    def startPositions(self):
+        startList = [d.start for d in self.Dlist]
+        return startList
+
+    def endPositions(self):
+        endlist = [d.end for d in self.Dlist]
+        return endlist
+
+    def checkInside(self, byteOffset):
+        return any(d.start < byteOffset < d.end for d in self.Dlist)
 
 
 class MasterWidget(QWidget):
@@ -227,9 +272,12 @@ class CodeEditor(QPlainTextEdit):
         self.Selection = CodeSelection()
         self.Context   = CodeContext(editor = self)
 
+        # self.ChangeFlag = False
+
         self.delimiterCreation = False
-        self.FreshDelimiters   = 0
-        self.lastFresh         = None
+        self.FreshDelimiters   = DelimitterArray()
+        self.FreshDelimitCount = 0
+        self.DelimiterID       = 0
 
         self.errSelections = []
         self.errSquiggles  : list[Squiggle] = []
@@ -337,6 +385,7 @@ class CodeEditor(QPlainTextEdit):
             painter.drawPath(locus)
 
     def reportChange(self):
+        # self.ChangeFlag = True
         if self.NewFile: self.version = 1
         else: self.version += 1
 
@@ -471,9 +520,17 @@ class CodeEditor(QPlainTextEdit):
                 self.ensureCursorVisible()
                 cursor.endEditBlock()
 
+                node  = self.fetchCursorNode(position = self.textCursor().position())
+                start = node.start_byte
+                end   = node.end_byte
+
+                self.DelimiterID += 1
+
+                self.FreshDelimiters.append(Delimiter(id = self.DelimiterID, ch = ch, start = start, end = end))
+
                 self.delimiterCreation = False
-                self.FreshDelimiters += 1
-                self.Context.fetchCursorContext(fresh = True)
+                self.FreshDelimitCount += 1
+                self.Context.fetchCursorContext(fresh = True, chAdd = 0)
 
                 return True
 
@@ -481,15 +538,22 @@ class CodeEditor(QPlainTextEdit):
             nextChar = self.document().characterAt(position) if position < docLen else ""
             prevChar = self.document().characterAt(position - 1) if position > 0  else ""
             node = self.fetchCursorNode(position = position + 1) if nextChar != "" else None
-            if ch == nextChar and self.FreshDelimiters > 0 and self.Context.delimiter.level > 0:
+            _, _, _, byteOffset = self.QOffsetToCoords(text = self.toPlainText(), offset = position)
+
+            isInside = self.FreshDelimiters.checkInside(byteOffset = byteOffset)
+            print("isInside =", self.FreshDelimiters.checkInside(byteOffset = byteOffset))
+
+            if ch == nextChar and isInside:
                 cursor.movePosition(QTextCursor.MoveOperation.Right)
                 self.setTextCursor(cursor)
                 cursor.endEditBlock()
+                self.Context.fetchCursorContext()
 
                 return True
 
         if ch in PAIR_BRACE:
             nextChar = self.document().characterAt(position) if position < docLen else ""
+            if nextChar == '\u2029': nextChar = '\n'
             if nextChar in AUTO_CLOSE_BEFORE:
                 self.delimiterCreation = True
 
@@ -498,12 +562,20 @@ class CodeEditor(QPlainTextEdit):
                 self.setTextCursor(cursor)
                 cursor.endEditBlock()
 
+                node  = self.fetchCursorNode(position = self.textCursor().position())
+                start = node.start_byte
+                end   = node.end_byte
+
+                self.DelimiterID += 1
+
+                self.FreshDelimiters.append(Delimiter(id = self.DelimiterID, ch = ch, start = start, end = end))
+
                 self.delimiterCreation = False
-                self.FreshDelimiters += 1
-                self.Context.fetchCursorContext(fresh = True)
+                self.FreshDelimitCount += 1
+                self.Context.fetchCursorContext(fresh = True, chAdd = 0)
 
                 return True
-        
+
         cursor.endEditBlock()
         return False
 
@@ -512,22 +584,24 @@ class CodeEditor(QPlainTextEdit):
         block = self.textCursor().block()
         position = self.textCursor().position() - block.position()
         blocktext = block.text()
-        self.textCursor().deletePreviousChar()
-        print(position)
 
-        if text == "(" and blocktext[position] == ")":
-            print("()")
+        _, _, _, byteOffset = self.QOffsetToCoords(text = self.toPlainText(), offset = self.textCursor().position())
+        isInside = self.FreshDelimiters.checkInside(byteOffset = byteOffset)
+        freshFlag = False
+
+        if isInside:
+            for delim in self.FreshDelimiters:
+                if delim.start < byteOffset < delim.end:
+                    if abs(delim.end - delim.start - 2) == 0:
+                        freshFlag = True
+                        break
+
+        self.textCursor().deletePreviousChar()
+
+        if text in PAIR_BRACE and blocktext[position] == PAIR_BRACE[text] and freshFlag:
             self.textCursor().deleteChar()
             success = True
-        if text == "{" and blocktext[position] == "}":
-            print("{}")
-            self.textCursor().deleteChar()
-            success = True
-        if text == "[" and blocktext[position] == "]":
-            print("[]")
-            self.textCursor().deleteChar()
-            success = True
-        
+
         return success
 
     def updateLineData(self, *args):
@@ -635,7 +709,7 @@ class CodeEditor(QPlainTextEdit):
             self.Language.client.Document.version += 1
             self.Language.client.didChangeMessage()
 
-    def offsetToCoordinates(self, text, offset):
+    def QOffsetToCoords(self, text, offset):
         preText = text[:offset]
         Row = preText.count('\n')
 
@@ -657,18 +731,18 @@ class CodeEditor(QPlainTextEdit):
 
     def incrementCapture(self, position, charRem, charAdd):
         if self.LoadFile:
-            return
+            return        
         
         self.oldTree = self.Language.syntax.Tree.copy()
         newText = self.document().toPlainText()
 
         oldStart = position
         oldEnd   = position + charRem
-        oldStartRow, oldStartCol16, oldStartCol8, oldStartByte = self.offsetToCoordinates(self.OldText, oldStart)
-        oldEndRow  , oldEndCol16  , oldEndCol8  , oldEndByte   = self.offsetToCoordinates(self.OldText, oldEnd)
+        oldStartRow, oldStartCol16, oldStartCol8, oldStartByte = self.QOffsetToCoords(self.OldText, oldStart)
+        oldEndRow  , oldEndCol16  , oldEndCol8  , oldEndByte   = self.QOffsetToCoords(self.OldText, oldEnd)
 
         newEnd   = position + charAdd
-        newEndRow, newEndCol16, newEndCol8, newEndByte = self.offsetToCoordinates(newText, newEnd)
+        newEndRow, newEndCol16, newEndCol8, newEndByte = self.QOffsetToCoords(newText, newEnd)
 
         self.oldTree.edit(
             start_byte   = oldStartByte,
@@ -749,7 +823,7 @@ class CodeEditor(QPlainTextEdit):
         elif position < 0:
             position += 1
         text = self.toPlainText()
-        row, col16, col8, byteOffset = self.offsetToCoordinates(text, position)
+        row, col16, col8, byteOffset = self.QOffsetToCoords(text, position)
         byteOffset = max(0, byteOffset - 1)
 
         node = Tree.root_node.named_descendant_for_byte_range(byteOffset, byteOffset)
@@ -777,7 +851,7 @@ class CodeEditor(QPlainTextEdit):
         self.document().contentsChange       .connect(self.incrementCapture)
         self.textChanged                     .connect(self.LSPDocConfig)
         self.Language.client.diagnosticsReady.connect(self.diagnose)
-        self.cursorPositionChanged           .connect(self.Context.fetchCursorContext)
+        self.document().contentsChange       .connect(lambda _, rem, add: self.Context.fetchCursorContext(chRem = rem, chAdd = add))
 
     def StyleConfig(self):
         self.setStyleSheet(
@@ -805,6 +879,11 @@ class CodeEditor(QPlainTextEdit):
 
             return
 
+        if e.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Right, Qt.Key.Key_Left):
+            super().keyPressEvent(e)
+            self.Context.fetchCursorContext()
+            return
+
         elif e.text() in PAIR_BRACE or e.text() in CLOSING_CHARS:
             if self.bracketInput(e.text()):
                 return
@@ -822,9 +901,9 @@ class CodeEditor(QPlainTextEdit):
             block = self.textCursor().block()
             position = self.textCursor().position() - block.position()
             text = self.textCursor().block().text()
-            if len(text) > position > 0 and text[position - 1] in {"(", "{", "["}:
-                if self.removeBracket(text[position - 1]):
-                    return
+            if len(text) > position > 0 and text[position - 1] in PAIR_BRACE:
+                self.removeBracket(text[position - 1])
+                return
 
             if not self.Selection.Select:
                 cursor    = self.textCursor()
@@ -848,6 +927,7 @@ class CodeEditor(QPlainTextEdit):
 
     def mousePressEvent(self, e):
         super().mousePressEvent(e)
+        self.Context.fetchCursorContext()
         print("------")
         self.Language.syntax.printSyntax()
         node = self.fetchCursorNode(position = self.textCursor().position())
@@ -874,6 +954,7 @@ class delimiterContext:
 
 
 class CodeContext:
+
     def __init__(self, editor : CodeEditor):
         self.editor    = editor
         self.delimiter = delimiterContext()
@@ -882,49 +963,63 @@ class CodeContext:
         self.scope     = None
         self.syntax    = None
 
-    def fetchCursorContext(self, fresh = False):
-        cursor = self.editor.textCursor()
-        position = cursor.position()
-        node = self.editor.fetchCursorNode(position = position)
-        self.delimiter.level = 0
-
-        prevDelimiters = self.delimiter.stack.copy()
+    def fetchCursorContext(self, fresh = False, chRem = 0, chAdd = 0):
+        if chAdd > 0 or chRem > 0:
+            for delim in self.editor.FreshDelimiters:
+                delim.end += chAdd
+                delim.end -= chRem
 
         if not self.editor.delimiterCreation:
+            cursor = self.editor.textCursor()
+            position = cursor.position()
+            node = self.editor.fetchCursorNode(position = position)
+
+            prevDelimiters = self.delimiter.stack.copy()
+
             self.delimiter.stack.clear()
+            self.delimiter.level = 0
+
+            _, _, _, byteOffset = self.editor.QOffsetToCoords(text = self.editor.toPlainText(), offset = position)
+
             while node:
                 if node.type in DELIMITER:
-                    _, _, _, byteOffset = self.editor.offsetToCoordinates(text = self.editor.toPlainText(), offset = position)
-                    nodeStart    = node.start_byte
-                    nodeStop     = node.end_byte
-                    print("type =", node.type)
-                    print("start =", nodeStart)
-                    print("stop =", nodeStop)
-                    print("offset =", position)
-                    if nodeStart < byteOffset < nodeStop:
+                    nodeStart = node.start_byte
+                    nodeEnd   = node.end_byte
+                    
+                    # print("type =", node.type)
+                    # print("start =", nodeStart)
+                    # print("stop =", nodeEnd)
+                    if nodeStart < byteOffset < nodeEnd:
                         self.delimiter.stack.append(node)
                         self.delimiter.level += 1
                 node = node.parent
 
             self.delimiter.stack.reverse()
 
-            
-            print("level =", self.delimiter.level)
+            print("offset =", position)
+
+            self.editor.FreshDelimiters.Dlist[:] = [
+                delim
+                for delim in self.editor.FreshDelimiters
+                if delim.start < byteOffset < delim.end
+            ]
+
+            for delim in self.editor.FreshDelimiters:
+                print("(", delim.start, delim.end, ")")
+
+            # print("level =", self.delimiter.level)
 
             removedNests = set(prevDelimiters) - set(self.delimiter.stack)
             # print("removed =", removedNests)
             # print("prev =", prevDelimiters)
             # print("current =", self.delimiter.stack)
             if not fresh:
-                if self.editor.FreshDelimiters > self.delimiter.level:
-                    self.editor.FreshDelimiters -= len(removedNests)
-                    self.editor.FreshDelimiters  = max(self.editor.FreshDelimiters, 0)
+                if self.editor.FreshDelimitCount > self.delimiter.level:
+                    self.editor.FreshDelimitCount -= len(removedNests)
+                    self.editor.FreshDelimitCount  = max(self.editor.FreshDelimitCount, 0)
             
-            print("fresh =", self.editor.FreshDelimiters)
+            print("Nfresh =", self.editor.FreshDelimitCount)
             print("------")
-
-
-
 
 
 class Squiggle:
@@ -969,7 +1064,7 @@ class syntaxTree:
         else:
             connector = "└── " if is_last else "├── "
             field_str = f"{field_name}: " if field_name else ""
-            print(f"{prefix}{connector}{field_str}({node.type})")
+            print(f"{prefix}{connector}{field_str}({node.type}, {repr(node.text.decode())})")
 
             new_prefix = prefix + ("    " if is_last else "│   ")
 
@@ -1053,12 +1148,14 @@ class syntaxHighlighter(QSyntaxHighlighter):
 
             if end_row < blockNumber or start_row > blockNumber:
                 continue
-                
+
             stack.extend(reversed(currentNode.children))
 
             applied = False
             format = QTextCharFormat()
             format.setFontItalic(False)
+
+            print("inside HIGHLIGHTER ", currentNode.type, currentNode.text)
 
             if currentNode.type in VS_CONTROL_FLOW:
                 format.setForeground(QColor("#C586C0"))
@@ -1084,6 +1181,9 @@ class syntaxHighlighter(QSyntaxHighlighter):
             elif currentNode.type == "comment":
                 format.setForeground(QColor("#8b949e")) 
                 format.setFontItalic(True)
+                applied = True 
+            elif currentNode.type in DELIMITER:
+                format.setForeground(QColor("#ffd700"))
                 applied = True
             elif currentNode.type == "identifier":
                 parent = currentNode.parent
@@ -1105,10 +1205,10 @@ class syntaxHighlighter(QSyntaxHighlighter):
                         format.setForeground(QColor("#FFFFFF"))
                 else:
                     format.setForeground(QColor("#9CDCFE"))
-            elif currentNode.type in VS_OPERATORS or currentNode.type in {"(", ")", "[", "]", "{", "}", ":", ",", "."}:
+            elif currentNode.type in VS_OPERATORS:
                 format.setForeground(QColor("#FFFFFF"))
                 applied = True
-            else:
+            elif currentNode.type not in {'(', ')', '{', '}', '[', ']'}:
                 format.setForeground(QColor("#FFFFFF"))
                 applied = True
 
