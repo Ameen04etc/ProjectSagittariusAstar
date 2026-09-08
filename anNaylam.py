@@ -57,7 +57,7 @@ VS_CONTROL_FLOW = {
 }
 
 VS_KEYWORDS = {
-    "lambda", "global", "nonlocal", "pass", 
+    "global", "nonlocal", "pass", 
     "True", "False", "None", 
     "and", "or", "not", "is", "in", "async", "await"
 }
@@ -65,6 +65,37 @@ VS_KEYWORDS = {
 VS_OPERATORS = {
     "+", "-", "*", "/", "%", "**", "//", "=", "==", "!=", 
     "<", ">", "<=", ">=", "@", "&", "|", "^", "~", "<<" , ">>"
+}
+
+PAIR_BRACE = {
+    '(' : ')',
+    '{' : '}',
+    '[' : ']',
+    '"' : '"',
+    "'" : "'"
+}
+
+INVERT_PAIR_BRACE = {
+    ')' : '(',
+    '}' : '{',
+    ']' : '[',
+    '"' : '"',
+    "'" : "'"
+}
+
+CLOSING_CHARS = set(PAIR_BRACE.values())
+
+AUTO_CLOSE_BEFORE = {' ', '\t', '\n', '\r', ')', ']', '}', '>', ',', ';', ':', '.', '"', "'", '`', ''}
+
+DELIMITER = {
+    "list"                    : "[]",
+    "set"                     : "{}",
+    "dictionary"              : "{}",
+    "parenthesized_expression": "()",
+    "parameters"              : "()",
+    "tuple"                   : "()",
+    "tuple_pattern"           : "()",
+    "argument_list"           : "()"
 }
 
 
@@ -131,7 +162,7 @@ class LineNumberArea(QWidget):
                 self.TotalLines += 1
                 opacity = 80
                 if blockNumber == self.CursIdx:
-                    opacity = 150
+                    opacity = 200
                 
                 painter.setPen(QPen(QColor(255, 255, 255, opacity)))
 
@@ -194,6 +225,11 @@ class CodeEditor(QPlainTextEdit):
         self.NewFile   = False
         self.LoadFile  = False
         self.Selection = CodeSelection()
+        self.Context   = CodeContext(editor = self)
+
+        self.delimiterCreation = False
+        self.FreshDelimiters   = 0
+        self.lastFresh         = None
 
         self.errSelections = []
         self.errSquiggles  : list[Squiggle] = []
@@ -228,6 +264,7 @@ class CodeEditor(QPlainTextEdit):
         self.StyleConfig()
         self.HighLightLine()
         self.SignalManager()
+        self.setCursorWidth(2)
 
         self.Language.syntax.sourceUpdate(self.document().toPlainText().encode())
         # self.Language.syntax.printSyntax()
@@ -409,6 +446,90 @@ class CodeEditor(QPlainTextEdit):
             else:
                 break
 
+    def bracketInput(self, ch: str):
+        cursor = self.textCursor()
+        position = cursor.position()
+        docLen = self.document().characterCount() - 1
+
+        cursor.beginEditBlock()
+        if cursor.hasSelection():
+            if ch in PAIR_BRACE:
+                self.delimiterCreation = True
+
+                selection   = cursor.selectedText()
+                selectStart = cursor.selectionStart()
+                selectEnd   = cursor.selectionEnd()
+                cursor.insertText(f"{ch}{selection}{PAIR_BRACE[ch]}")
+                if position == selectStart:
+                    cursor.setPosition(selectEnd + 1)
+                    cursor.setPosition(selectStart + 1, QTextCursor.MoveMode.KeepAnchor)
+                else:
+                    cursor.setPosition(selectStart + 1)
+                    cursor.setPosition(selectEnd + 1, QTextCursor.MoveMode.KeepAnchor)
+
+                self.setTextCursor(cursor)
+                self.ensureCursorVisible()
+                cursor.endEditBlock()
+
+                self.delimiterCreation = False
+                self.FreshDelimiters += 1
+                self.Context.fetchCursorContext(fresh = True)
+
+                return True
+
+        if ch in CLOSING_CHARS:
+            nextChar = self.document().characterAt(position) if position < docLen else ""
+            prevChar = self.document().characterAt(position - 1) if position > 0  else ""
+            node = self.fetchCursorNode(position = position + 1) if nextChar != "" else None
+            if ch == nextChar and self.FreshDelimiters > 0 and self.Context.delimiter.level > 0:
+                cursor.movePosition(QTextCursor.MoveOperation.Right)
+                self.setTextCursor(cursor)
+                cursor.endEditBlock()
+
+                return True
+
+        if ch in PAIR_BRACE:
+            nextChar = self.document().characterAt(position) if position < docLen else ""
+            if nextChar in AUTO_CLOSE_BEFORE:
+                self.delimiterCreation = True
+
+                cursor.insertText(ch + PAIR_BRACE[ch])
+                cursor.movePosition(QTextCursor.MoveOperation.Left)
+                self.setTextCursor(cursor)
+                cursor.endEditBlock()
+
+                self.delimiterCreation = False
+                self.FreshDelimiters += 1
+                self.Context.fetchCursorContext(fresh = True)
+
+                return True
+        
+        cursor.endEditBlock()
+        return False
+
+    def removeBracket(self, text):
+        success = False
+        block = self.textCursor().block()
+        position = self.textCursor().position() - block.position()
+        blocktext = block.text()
+        self.textCursor().deletePreviousChar()
+        print(position)
+
+        if text == "(" and blocktext[position] == ")":
+            print("()")
+            self.textCursor().deleteChar()
+            success = True
+        if text == "{" and blocktext[position] == "}":
+            print("{}")
+            self.textCursor().deleteChar()
+            success = True
+        if text == "[" and blocktext[position] == "]":
+            print("[]")
+            self.textCursor().deleteChar()
+            success = True
+        
+        return success
+
     def updateLineData(self, *args):
         totalLines = self.blockCount()
         cursLine = self.textCursor().blockNumber()
@@ -458,15 +579,23 @@ class CodeEditor(QPlainTextEdit):
             self.LoadFile = True
             self.setPlainText(text)
             self.LoadFile = False
-            self.Language.syntax.sourceUpdate(self.toPlainText().encode("utf-8"), incremental = False)
-            # self.highlightNode()
-            self.Language.Highlighter.rehighlight()
+
+            self.Language.syntax.sourceUpdate(
+                self.toPlainText().encode("utf-8"),
+                incremental = False
+                )
+            self.OldText = self.toPlainText()
+
+            QTimer.singleShot(50, lambda: self.codeHighlight(refresh = True))
+
+            # QTimer.singleShot(50, self.Language.Highlighter.rehighlight)
+            # self.Language.Highlighter.rehighlight()
 
     def diagnose(self, uri, version, diagnostics : dict):
-        print("Current =", self.version)
-        print("Response =", version)
-        print("FilePath =", self.FilePath)
-        print("uri =", uri)
+        # print("Current =", self.version)
+        # print("Response =", version)
+        # print("FilePath =", self.FilePath)
+        # print("uri =", uri)
         if version != self.version:
             return
         # if uri != self.FilePath:
@@ -529,7 +658,8 @@ class CodeEditor(QPlainTextEdit):
     def incrementCapture(self, position, charRem, charAdd):
         if self.LoadFile:
             return
-        # print("---------------------------------------")
+        
+        self.oldTree = self.Language.syntax.Tree.copy()
         newText = self.document().toPlainText()
 
         oldStart = position
@@ -538,8 +668,18 @@ class CodeEditor(QPlainTextEdit):
         oldEndRow  , oldEndCol16  , oldEndCol8  , oldEndByte   = self.offsetToCoordinates(self.OldText, oldEnd)
 
         newEnd   = position + charAdd
-        newEndRow  , newEndCol16  , newEndCol8  , newEndByte   = self.offsetToCoordinates(newText, newEnd)
+        newEndRow, newEndCol16, newEndCol8, newEndByte = self.offsetToCoordinates(newText, newEnd)
 
+        self.oldTree.edit(
+            start_byte   = oldStartByte,
+            old_end_byte = oldEndByte,
+            new_end_byte = newEndByte,
+
+            start_point   = (oldStartRow, oldStartCol8),
+            old_end_point = (oldEndRow, oldEndCol8),
+            new_end_point = (newEndRow, newEndCol8),
+        )
+        
         self.Language.syntax.Tree.edit(
             start_byte   = oldStartByte,
             old_end_byte = oldEndByte,
@@ -549,24 +689,57 @@ class CodeEditor(QPlainTextEdit):
             old_end_point = (oldEndRow, oldEndCol8),
             new_end_point = (newEndRow, newEndCol8),
         )
-        self.Language.syntax.sourceUpdate(newText.encode("utf-8"))
-        # self.Language.syntax.printSyntax()
-        # print("---")
-        changed_ranges = self.oldTree.changed_ranges(self.Language.syntax.Tree)
+
+
+        self.Language.syntax.sourceUpdate(newText.encode("utf-8"), incremental = True)
+
+        self.newTree = self.Language.syntax.Tree
+        changed_ranges = self.oldTree.changed_ranges(self.newTree)
+
+        affectedBlocks = set()
+
+        for row in range(oldStartRow, newEndRow + 1):
+            affectedBlocks.add(row)
+
+        # print(changed_ranges)
 
         for rng in changed_ranges:
-            start_block_num = rng.start_point[0]
-            end_block_num = rng.end_point[0]
-            
-            for block_num in range(start_block_num, end_block_num + 1):
-                block = self.document().findBlockByNumber(block_num)
+            for row in range(rng.start_point[0], rng.end_point[0] + 1):
+                affectedBlocks.add(row)
+
+        # print(len(affectedBlocks))
+
+        self.codeHighlight(blocks = sorted(affectedBlocks))
+
+        self.OldText = newText
+
+    def codeHighlight(self, blocks = None, refresh = False):
+        if refresh:
+            blocks = list(range(self.blockCount()))
+
+        if not blocks:
+            return
+
+        chunkLen = 6
+
+        def highlightNextChunk(idx):
+            chunk = blocks[idx:idx + chunkLen]
+
+            for blockID in chunk:
+                block = self.document().findBlockByNumber(blockID)
+
                 if block.isValid():
                     self.Language.Highlighter.rehighlightBlock(block)
 
-        self.newNode = self.fetchCursorNode()
-        self.oldNode = self.newNode
-        self.OldText = newText
-        self.oldTree = self.Language.syntax.Tree
+            nextIdx = idx + chunkLen
+
+            if nextIdx < len(blocks):
+                QTimer.singleShot(
+                    0,
+                    lambda: highlightNextChunk(nextIdx)
+                )
+
+        highlightNextChunk(0)
 
     def fetchCursorNode(self, Tree = None, position =  None):
         if Tree is None: Tree = self.Language.syntax.Tree
@@ -582,26 +755,6 @@ class CodeEditor(QPlainTextEdit):
         node = Tree.root_node.named_descendant_for_byte_range(byteOffset, byteOffset)
 
         return node
-
-    def fetchLastCommonParent(self, oldNode, newNode):
-        # print("oldNode =", oldNode.type)
-        # print("newNode =", newNode.type)
-        if oldNode is None or newNode is None:
-            return None
-
-        oldAncestors = set()
-        old = oldNode.parent
-        while old is not None:
-            oldAncestors.add(old.type)
-            old = old.parent
-
-        new = newNode.parent
-        while new is not None:
-            if new.type in oldAncestors:
-                return new
-            new = new.parent
-
-        return None
 
     def inputMethodEvent(self, event):
         if event.commitString():
@@ -624,6 +777,7 @@ class CodeEditor(QPlainTextEdit):
         self.document().contentsChange       .connect(self.incrementCapture)
         self.textChanged                     .connect(self.LSPDocConfig)
         self.Language.client.diagnosticsReady.connect(self.diagnose)
+        self.cursorPositionChanged           .connect(self.Context.fetchCursorContext)
 
     def StyleConfig(self):
         self.setStyleSheet(
@@ -651,6 +805,10 @@ class CodeEditor(QPlainTextEdit):
 
             return
 
+        elif e.text() in PAIR_BRACE or e.text() in CLOSING_CHARS:
+            if self.bracketInput(e.text()):
+                return
+
         elif e.key() == Qt.Key_Tab:
             if self.Selection.Select:
                 self.BlockIndent()
@@ -661,6 +819,13 @@ class CodeEditor(QPlainTextEdit):
                 return
 
         elif e.key() == Qt.Key_Backspace:
+            block = self.textCursor().block()
+            position = self.textCursor().position() - block.position()
+            text = self.textCursor().block().text()
+            if len(text) > position > 0 and text[position - 1] in {"(", "{", "["}:
+                if self.removeBracket(text[position - 1]):
+                    return
+
             if not self.Selection.Select:
                 cursor    = self.textCursor()
                 blockText = cursor.block().text()
@@ -680,19 +845,14 @@ class CodeEditor(QPlainTextEdit):
                 return
 
         super().keyPressEvent(e)
-        self.oldNode = self.fetchCursorNode()
 
     def mousePressEvent(self, e):
         super().mousePressEvent(e)
-        self.oldNode = self.fetchCursorNode()
-        # self.Language.syntax.printSyntax()
-        print("Node =", self.oldNode)
-        if self.oldNode.parent:
-            print("Parent =", self.oldNode.parent)
         print("------")
-        # self.Language.syntax.printAllNodes()
-        # self.highlightNode()
-        # QTimer.singleShot(1000, lambda: self.clearHighlight(4, 7))
+        self.Language.syntax.printSyntax()
+        node = self.fetchCursorNode(position = self.textCursor().position())
+        print(node.type)
+        # print(self.document().characterCount())
 
 
 class CodeSelection:
@@ -705,6 +865,66 @@ class CodeSelection:
         self.Select     = False
         self.FirstBlock = None
         self.LastBlock  = None
+
+
+class delimiterContext:
+    def __init__(self):
+        self.level = 0
+        self.stack = []
+
+
+class CodeContext:
+    def __init__(self, editor : CodeEditor):
+        self.editor    = editor
+        self.delimiter = delimiterContext()
+        self.string    = None
+        self.comment   = None
+        self.scope     = None
+        self.syntax    = None
+
+    def fetchCursorContext(self, fresh = False):
+        cursor = self.editor.textCursor()
+        position = cursor.position()
+        node = self.editor.fetchCursorNode(position = position)
+        self.delimiter.level = 0
+
+        prevDelimiters = self.delimiter.stack.copy()
+
+        if not self.editor.delimiterCreation:
+            self.delimiter.stack.clear()
+            while node:
+                if node.type in DELIMITER:
+                    _, _, _, byteOffset = self.editor.offsetToCoordinates(text = self.editor.toPlainText(), offset = position)
+                    nodeStart    = node.start_byte
+                    nodeStop     = node.end_byte
+                    print("type =", node.type)
+                    print("start =", nodeStart)
+                    print("stop =", nodeStop)
+                    print("offset =", position)
+                    if nodeStart < byteOffset < nodeStop:
+                        self.delimiter.stack.append(node)
+                        self.delimiter.level += 1
+                node = node.parent
+
+            self.delimiter.stack.reverse()
+
+            
+            print("level =", self.delimiter.level)
+
+            removedNests = set(prevDelimiters) - set(self.delimiter.stack)
+            # print("removed =", removedNests)
+            # print("prev =", prevDelimiters)
+            # print("current =", self.delimiter.stack)
+            if not fresh:
+                if self.editor.FreshDelimiters > self.delimiter.level:
+                    self.editor.FreshDelimiters -= len(removedNests)
+                    self.editor.FreshDelimiters  = max(self.editor.FreshDelimiters, 0)
+            
+            print("fresh =", self.editor.FreshDelimiters)
+            print("------")
+
+
+
 
 
 class Squiggle:
@@ -738,8 +958,8 @@ class syntaxTree:
     
     def sourceUpdate(self, source, incremental = True):
         self.Source =  source
-        if incremental: self.Tree   = self.Parser.parse(self.Source, self.Tree)
-        else: self.Tree   = self.Parser.parse(self.Source)
+        if incremental: self.Tree = self.Parser.parse(self.Source, self.Tree)
+        else: self.Tree = self.Parser.parse(self.Source)
 
     def printSyntax(self, node = None, prefix="", is_last=True, is_root=True, field_name=None):
         if node is None: node = self.Tree.root_node
@@ -849,7 +1069,7 @@ class syntaxHighlighter(QSyntaxHighlighter):
             elif currentNode.type in {"import", "from", "as"}:
                 format.setForeground(QColor("#c586c0"))
                 applied = True
-            elif currentNode.type in {"def", "class"}:
+            elif currentNode.type in {"def", "class", "lambda"}:
                 format.setForeground(QColor("#fe7b72"))
                 applied = True
             elif currentNode.type in {"integer", "float", "complex"}:
@@ -876,7 +1096,7 @@ class syntaxHighlighter(QSyntaxHighlighter):
                     elif parent.type == "class_definition" and parent.child_by_field_name("name") == currentNode:
                         format.setForeground(QColor("#4dc1a0"))
                     elif parent.type == "decorator":
-                        format.setForeground(QColor("#DCDCAA"))
+                        format.setForeground(QColor("#4bc9b0"))
                     elif  parent.type == "dotted_name":
                         format.setForeground(QColor("#4bc9b0"))
                     elif parent.type == "argument_list":
@@ -1090,14 +1310,14 @@ class LSPClient(QObject):
         uri     = params["uri"]
         version = params["version"]
         diagnostics = params["diagnostics"]
-        print(version, uri)
+        # print(version, uri)
 
         self.diagnosticsReady.emit(uri, version, diagnostics)
 
         for i, diagnostic in enumerate(diagnostics):
             k = i % 4
-            print(colorMap[k], diagnostic)
-            print(f"{RESET}")
+            # print(colorMap[k], diagnostic)
+            # print(f"{RESET}")
         pass
 
     def readError(self):
@@ -1138,3 +1358,4 @@ window.resize(target_width, target_height)
 window.move(avail.x() + (avail.width() // 2), avail.y())
 
 sys.exit(app.exec())
+
