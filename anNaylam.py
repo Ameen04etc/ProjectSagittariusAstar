@@ -583,7 +583,6 @@ class CodeEditor(QPlainTextEdit):
 
                 return True
 
-
         if ch in PAIR_BRACE:
             nextChar = self.document().characterAt(position) if position < docLen else ""
             if nextChar == '\u2029': nextChar = '\n'
@@ -821,6 +820,7 @@ class CodeEditor(QPlainTextEdit):
         self.codeHighlight(blocks = affectedBlocks)
 
         print("AFFECTED BLOCKS =", sorted(affectedBlocks))
+        print("------------------------")
 
         self.OldText = newText
 
@@ -842,12 +842,13 @@ class CodeEditor(QPlainTextEdit):
             block = self.document().findBlockByNumber(blockNo)
             blockPosition = block.position()
             text = block.text()
+            print("block", blockNo, "-->", text)
 
             for i, ch in enumerate(text):
                 absPosition = blockPosition + i
                 if ch in {"(", "{", "["}:
                     node = self.fetchCursorNode(position = absPosition)
-                    if  node.type in {"comment", "string", "string_start", "string_content"}:
+                    if  node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
                         continue
 
                     if   ch == "(": compList[0] += 1
@@ -861,7 +862,7 @@ class CodeEditor(QPlainTextEdit):
 
                 elif ch in {")", "}", "]"}:
                     node = self.fetchCursorNode(position = absPosition)
-                    if node.type in {"comment", "string", "string_start", "string_content"}:
+                    if node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
                         continue
 
                     match = False
@@ -898,6 +899,9 @@ class CodeEditor(QPlainTextEdit):
             for blockNo in self.incompleteStacks
             if blockNo not in nowComplete
         ]
+        print("NowComplete =", nowComplete)
+
+        print("PRE incomplete stacks =", self.incompleteStacks)
 
         for blockNo in affectedBlocks:
             print("MID")
@@ -911,7 +915,7 @@ class CodeEditor(QPlainTextEdit):
                 absPosition = blockPosition + i
                 if ch in {"(", "{", "["}:
                     node = self.fetchCursorNode(position = absPosition)
-                    if  node.type in {"comment", "string", "string_start", "string_content"}:
+                    if  node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
                         continue
 
                     if   ch == "(": isComplete[0] += 1
@@ -925,7 +929,7 @@ class CodeEditor(QPlainTextEdit):
                     
                 elif ch in {")", "}", "]"}:
                     node = self.fetchCursorNode(position = absPosition)
-                    if node.type in {"comment", "string", "string_start", "string_content"}:
+                    if node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
                         continue
 
                     match = False
@@ -954,9 +958,14 @@ class CodeEditor(QPlainTextEdit):
                         tempBrackets.update({
                             (blockNo, i) : QColor("#FF0000")
                         })
-
+            print("IsComplete Mid =", isComplete)
             if any(i != 0 for i in isComplete):
-                    self.incompleteStacks.append(blockNo)
+                    if blockNo not in self.incompleteStacks:
+                        self.incompleteStacks.append(blockNo)
+            elif blockNo in self.incompleteStacks:
+                self.incompleteStacks.remove(blockNo)
+
+        print("MID incomplete stacks =", self.incompleteStacks)
 
         for blockNo in self.incompleteStacks:
             print("POST")
@@ -972,7 +981,7 @@ class CodeEditor(QPlainTextEdit):
                 absPosition = blockPosition + i
                 if ch in {"(", "{", "["}:
                     node = self.fetchCursorNode(position = absPosition)
-                    if  node.type in {"comment", "string", "string_start", "string_content"}:
+                    if  node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
                         continue
 
                     if   ch == "(": compList[0] += 1
@@ -986,7 +995,7 @@ class CodeEditor(QPlainTextEdit):
 
                 elif ch in {")", "}", "]"}:
                     node = self.fetchCursorNode(position = absPosition)
-                    if node.type in {"comment", "string", "string_start", "string_content"}:
+                    if node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
                         continue
 
                     match = False
@@ -1024,13 +1033,11 @@ class CodeEditor(QPlainTextEdit):
             if blockNo not in nowComplete
         ]
 
-        print("incomplete stacks =", self.incompleteStacks)
-
+        print("POST incomplete stacks =", self.incompleteStacks)
         self.brackets = tempBrackets
 
-        for key in self.brackets:
-            print(key, self.brackets[key])
-
+        # for key in self.brackets:
+        #     print(key, self.brackets[key])
 
     def codeHighlight(self, blocks = None, refresh = False):
         if refresh:
@@ -1427,7 +1434,7 @@ class syntaxHighlighter(QSyntaxHighlighter):
                 format.setForeground(QColor("#B5CEA8"))
                 applied = True
             elif currentNode.type == "escape_sequence":
-                format.setForeground(QColor("#CE9178"))
+                format.setForeground(QColor("#d7ba7d"))
                 applied = True
             elif currentNode.type in {"string", "string_start", "string_content", "string_end"}:
                 format.setForeground(QColor("#a5d6ff"))
