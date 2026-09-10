@@ -58,7 +58,7 @@ VS_CONTROL_FLOW = {
 
 VS_KEYWORDS = {
     "global", "nonlocal", "pass", 
-    "True", "False", "none", 
+    "true", "false", "none", 
     "and", "or", "not", "is", "in", "async", "await"
 }
 
@@ -87,16 +87,32 @@ CLOSING_CHARS = set(PAIR_BRACE.values())
 
 AUTO_CLOSE_BEFORE = {' ', '\t', '\n', '\r', ')', ']', '}', '>', ',', ';', ':', '.', '"', "'", '`', ''}
 
+
 DELIMITER = {
-    "list"                    : "[]",
-    "set"                     : "{}",
-    "dictionary"              : "{}",
-    "parenthesized_expression": "()",
-    "parameters"              : "()",
-    "tuple"                   : "()",
-    "tuple_pattern"           : "()",
-    "argument_list"           : "()"
+    "subscript"               : ("[", "]"),
+    "list"                    : ("[", "]"),
+    "list_comprehension"      : ("[", "]"),
+    "list_pattern"            : ("[", "]"),
+    "type_parameter"          : ("[", "]"),
+
+    "set"                     : ("{", "}"),
+    "set_comprehension"       : ("{", "}"),
+    "dictionary"              : ("{", "}"),
+    "dictionary_comprehension": ("{", "}"),
+    "interpolation"           : ("{", "}"),
+
+    "parenthesized_expression": ("(", ")"),
+    "parameters"              : ("(", ")"),
+    "tuple"                   : ("(", ")"),
+    "tuple_pattern"           : ("(", ")"),
+    "argument_list"           : ("(", ")")
 }
+
+RAINBOW_COLORS = [
+    QColor("#ffd700"),
+    QColor("#d86fd4"),
+    QColor("#179fff"),
+]
 
 
 def ListIdx(listObject : list, target):
@@ -147,7 +163,15 @@ class DelimitterArray:
         return endlist
 
     def checkInside(self, byteOffset):
-        return any(d.start < byteOffset < d.end for d in self.Dlist)
+        insideList = []
+        for delim in self.Dlist:
+            if delim.start < byteOffset < delim.end:
+                insideList.append(delim)
+
+        if insideList:
+            return True, insideList
+
+        return False, insideList
 
 
 class MasterWidget(QWidget):
@@ -320,6 +344,9 @@ class CodeEditor(QPlainTextEdit):
         self.newTree = self.Language.syntax.Tree
         self.oldNode = self.Language.syntax.Tree.root_node
         self.newNode = self.Language.syntax.Tree.root_node
+
+        self.incompleteStacks = []
+        self.brackets = {}
 
     def paintEvent(self, e):
         painter = QPainter(self.viewport())
@@ -501,6 +528,7 @@ class CodeEditor(QPlainTextEdit):
         docLen = self.document().characterCount() - 1
 
         cursor.beginEditBlock()
+
         if cursor.hasSelection():
             if ch in PAIR_BRACE:
                 self.delimiterCreation = True
@@ -540,16 +568,21 @@ class CodeEditor(QPlainTextEdit):
             node = self.fetchCursorNode(position = position + 1) if nextChar != "" else None
             _, _, _, byteOffset = self.QOffsetToCoords(text = self.toPlainText(), offset = position)
 
-            isInside = self.FreshDelimiters.checkInside(byteOffset = byteOffset)
-            print("isInside =", self.FreshDelimiters.checkInside(byteOffset = byteOffset))
+            isInside, dlist = self.FreshDelimiters.checkInside(byteOffset = byteOffset)
+            print("isInside =", isInside)
+            print("ENDS =", [delim.end for delim in dlist])
+            print("OFFSET =", byteOffset)
+            if isInside:
+                closestEnd = min([delim.end for delim in dlist])
 
-            if ch == nextChar and isInside:
+            if ch == nextChar and isInside and (closestEnd - byteOffset) == 1:
                 cursor.movePosition(QTextCursor.MoveOperation.Right)
                 self.setTextCursor(cursor)
                 cursor.endEditBlock()
                 self.Context.fetchCursorContext()
 
                 return True
+
 
         if ch in PAIR_BRACE:
             nextChar = self.document().characterAt(position) if position < docLen else ""
@@ -783,9 +816,221 @@ class CodeEditor(QPlainTextEdit):
 
         # print(len(affectedBlocks))
 
-        self.codeHighlight(blocks = sorted(affectedBlocks))
+        affectedBlocks =  sorted(affectedBlocks)
+
+        self.codeHighlight(blocks = affectedBlocks)
+
+        print("AFFECTED BLOCKS =", sorted(affectedBlocks))
 
         self.OldText = newText
+
+    def bracketMatching(self, affectedBlocks):
+        dStack = []
+        dFormat = QTextCharFormat()
+        maxBlocNo = max(affectedBlocks)
+        minBlocNo = min(affectedBlocks)
+        tempBrackets  = {}
+
+        nowComplete = []
+
+        for blockNo in self.incompleteStacks:
+            print("PRE")
+            compList = [0, 0, 0]
+            if blockNo in affectedBlocks or blockNo > minBlocNo:
+                continue
+
+            block = self.document().findBlockByNumber(blockNo)
+            blockPosition = block.position()
+            text = block.text()
+
+            for i, ch in enumerate(text):
+                absPosition = blockPosition + i
+                if ch in {"(", "{", "["}:
+                    node = self.fetchCursorNode(position = absPosition)
+                    if  node.type in {"comment", "string", "string_start", "string_content"}:
+                        continue
+
+                    if   ch == "(": compList[0] += 1
+                    elif ch == "{": compList[1] += 1
+                    elif ch == "[": compList[2] += 1
+
+                    dStack.append((ch, blockNo, i))
+                    tempBrackets.update({
+                        (blockNo, i) : QColor("#FF0000")
+                    })
+
+                elif ch in {")", "}", "]"}:
+                    node = self.fetchCursorNode(position = absPosition)
+                    if node.type in {"comment", "string", "string_start", "string_content"}:
+                        continue
+
+                    match = False
+
+                    if   ch == ")": compList[0] -= 1
+                    elif ch == "}": compList[1] -= 1
+                    elif ch == "]": compList[2] -= 1
+
+                    while dStack:
+                        opening, blockNumber, position = dStack.pop()
+
+                        if ch == PAIR_BRACE[opening]:
+                            match = True
+                            level = len(dStack)
+                            color = RAINBOW_COLORS[level % len(RAINBOW_COLORS)]
+
+                            tempBrackets.update({
+                                (blockNumber, position) : color,
+                                (blockNo, i)     : color
+                            })
+
+                            break
+
+                    if not match:
+                        tempBrackets.update({
+                            blockNo : [i, QColor("#FF0000")]
+                        })
+
+            if compList == [0, 0, 0]:
+                nowComplete.append(blockNo)
+
+        self.incompleteStacks[:] = [
+            blockNo
+            for blockNo in self.incompleteStacks
+            if blockNo not in nowComplete
+        ]
+
+        for blockNo in affectedBlocks:
+            print("MID")
+            block = self.document().findBlockByNumber(blockNo)
+            blockPosition = block.position()
+            text = block.text()
+
+            isComplete = [0, 0, 0]
+
+            for i, ch in enumerate(text):
+                absPosition = blockPosition + i
+                if ch in {"(", "{", "["}:
+                    node = self.fetchCursorNode(position = absPosition)
+                    if  node.type in {"comment", "string", "string_start", "string_content"}:
+                        continue
+
+                    if   ch == "(": isComplete[0] += 1
+                    elif ch == "{": isComplete[1] += 1
+                    elif ch == "[": isComplete[2] += 1
+
+                    dStack.append((ch, blockNo, i))
+                    tempBrackets.update({
+                        (blockNo, i) : QColor("#FF0000")
+                    })
+                    
+                elif ch in {")", "}", "]"}:
+                    node = self.fetchCursorNode(position = absPosition)
+                    if node.type in {"comment", "string", "string_start", "string_content"}:
+                        continue
+
+                    match = False
+
+                    if   ch == ")": isComplete[0] -= 1
+                    elif ch == "}": isComplete[1] -= 1
+                    elif ch == "]": isComplete[2] -= 1
+
+                    while dStack:
+                        opening, blockNumber, position = dStack.pop()
+
+                        if ch == PAIR_BRACE[opening]:
+                            match = True
+                            level = len(dStack)
+                            color = RAINBOW_COLORS[level % len(RAINBOW_COLORS)]
+                            dFormat.setForeground(color)
+
+                            tempBrackets.update({
+                                (blockNumber, position) : color,
+                                (blockNo, i)     : color
+                            })
+
+                            break
+
+                    if not match:
+                        tempBrackets.update({
+                            (blockNo, i) : QColor("#FF0000")
+                        })
+
+            if any(i != 0 for i in isComplete):
+                    self.incompleteStacks.append(blockNo)
+
+        for blockNo in self.incompleteStacks:
+            print("POST")
+            compList = [0, 0, 0]
+            if blockNo in affectedBlocks or blockNo < maxBlocNo:
+                continue
+ 
+            block = self.document().findBlockByNumber(blockNo)
+            blockPosition = block.position()
+            text = block.text()
+
+            for i, ch in enumerate(text):
+                absPosition = blockPosition + i
+                if ch in {"(", "{", "["}:
+                    node = self.fetchCursorNode(position = absPosition)
+                    if  node.type in {"comment", "string", "string_start", "string_content"}:
+                        continue
+
+                    if   ch == "(": compList[0] += 1
+                    elif ch == "{": compList[1] += 1
+                    elif ch == "[": compList[2] += 1
+
+                    dStack.append((ch, blockNo, i))
+                    tempBrackets.update({
+                        (blockNo, i) : QColor("#FF0000")
+                    })
+
+                elif ch in {")", "}", "]"}:
+                    node = self.fetchCursorNode(position = absPosition)
+                    if node.type in {"comment", "string", "string_start", "string_content"}:
+                        continue
+
+                    match = False
+
+                    if   ch == ")": compList[0] -= 1
+                    elif ch == "}": compList[1] -= 1
+                    elif ch == "]": compList[2] -= 1
+
+                    while dStack:
+                        opening, blockNumber, position = dStack.pop()
+
+                        if ch == PAIR_BRACE[opening]:
+                            match = True
+                            level = len(dStack)
+                            color = RAINBOW_COLORS[level % len(RAINBOW_COLORS)]
+
+                            tempBrackets.update({
+                                (blockNumber, position) : color,
+                                (blockNo, i)            : color
+                            })
+
+                            break
+
+                    if not match:
+                        tempBrackets.update({
+                            (blockNo, i) : QColor("#FF0000")
+                        })
+
+            if compList == [0, 0, 0]:
+                nowComplete.append(blockNo)
+
+        self.incompleteStacks[:] = [
+            blockNo
+            for blockNo in self.incompleteStacks
+            if blockNo not in nowComplete
+        ]
+
+        print("incomplete stacks =", self.incompleteStacks)
+
+        self.brackets = tempBrackets
+
+        for key in self.brackets:
+            print(key, self.brackets[key])
+
 
     def codeHighlight(self, blocks = None, refresh = False):
         if refresh:
@@ -793,6 +1038,8 @@ class CodeEditor(QPlainTextEdit):
 
         if not blocks:
             return
+
+        self.bracketMatching(affectedBlocks = blocks)
 
         chunkLen = 6
 
@@ -929,7 +1176,8 @@ class CodeEditor(QPlainTextEdit):
         super().mousePressEvent(e)
         self.Context.fetchCursorContext()
         print("------")
-        self.Language.syntax.printSyntax()
+        if e.button() == Qt.RightButton:
+            self.Language.syntax.printSyntax()
         node = self.fetchCursorNode(position = self.textCursor().position())
         print(node.type)
         # print(self.document().characterCount())
@@ -996,7 +1244,7 @@ class CodeContext:
 
             self.delimiter.stack.reverse()
 
-            print("offset =", position)
+            # print("offset =", position)
 
             self.editor.FreshDelimiters.Dlist[:] = [
                 delim
@@ -1004,8 +1252,8 @@ class CodeContext:
                 if delim.start < byteOffset < delim.end
             ]
 
-            for delim in self.editor.FreshDelimiters:
-                print("(", delim.start, delim.end, ")")
+            # for delim in self.editor.FreshDelimiters:
+            #     print("(", delim.start, delim.end, ")")
 
             # print("level =", self.delimiter.level)
 
@@ -1018,8 +1266,8 @@ class CodeContext:
                     self.editor.FreshDelimitCount -= len(removedNests)
                     self.editor.FreshDelimitCount  = max(self.editor.FreshDelimitCount, 0)
             
-            print("Nfresh =", self.editor.FreshDelimitCount)
-            print("------")
+            # print("Nfresh =", self.editor.FreshDelimitCount)
+            # print("------")
 
 
 class Squiggle:
@@ -1093,7 +1341,7 @@ class syntaxTree:
 
 class PythonLanguage(codeLanguage):
 
-    def __init__(self, document, editor):
+    def __init__(self, document, editor : QPlainTextEdit):
         super().__init__()
         self.syntax      = syntaxTree(Language(tree_sitter_python.language()))
         self.Highlighter = syntaxHighlighter(document, self.syntax, editor)
@@ -1126,19 +1374,25 @@ class PythonLanguage(codeLanguage):
 
 
 class syntaxHighlighter(QSyntaxHighlighter):
-    def __init__(self, document, syntax, editor):
+    def __init__(self, document : QPlainTextEdit.document, syntax, editor : CodeEditor):
         super().__init__(document)
         self.syntax = syntax
         self.editor = editor
+        self.dStack = []
+
+        self.prevBlockNo = 0
+        self.prevdStackLen = 0
 
     def highlightBlock(self, text):
         if not self.syntax.Tree: return
 
         blockNumber = self.currentBlock().blockNumber()
-        
+        blockPosition = self.currentBlock().position()
+
         line_bytes = text.encode("utf-8")
 
         stack = [self.syntax.Tree.root_node]
+        level = 0
 
         while stack:
             currentNode = stack.pop()
@@ -1155,7 +1409,7 @@ class syntaxHighlighter(QSyntaxHighlighter):
             format = QTextCharFormat()
             format.setFontItalic(False)
 
-            print("inside HIGHLIGHTER ", currentNode.type, currentNode.text)
+            # print("inside HIGHLIGHTER ", currentNode.type, currentNode.text)
 
             if currentNode.type in VS_CONTROL_FLOW:
                 format.setForeground(QColor("#C586C0"))
@@ -1181,10 +1435,8 @@ class syntaxHighlighter(QSyntaxHighlighter):
             elif currentNode.type == "comment":
                 format.setForeground(QColor("#8b949e")) 
                 format.setFontItalic(True)
-                applied = True 
-            elif currentNode.type in DELIMITER:
-                format.setForeground(QColor("#ffd700"))
                 applied = True
+
             elif currentNode.type == "identifier":
                 parent = currentNode.parent
                 applied = True
@@ -1208,7 +1460,7 @@ class syntaxHighlighter(QSyntaxHighlighter):
             elif currentNode.type in VS_OPERATORS:
                 format.setForeground(QColor("#FFFFFF"))
                 applied = True
-            elif currentNode.type not in {'(', ')', '{', '}', '[', ']'}:
+            elif currentNode.type not in {"(", "{", "[", ")", "}", "]"}:
                 format.setForeground(QColor("#FFFFFF"))
                 applied = True
 
@@ -1225,6 +1477,12 @@ class syntaxHighlighter(QSyntaxHighlighter):
                         self.setFormat(startChar, length, format)
                 except UnicodeDecodeError:
                     pass
+
+        dFormat = QTextCharFormat()
+        for position, color in self.editor.brackets.items():
+            if position[0] == blockNumber:
+                dFormat.setForeground(color)
+                self.setFormat(position[1], 1, dFormat)
 
 
 class readBufferState(Enum):
