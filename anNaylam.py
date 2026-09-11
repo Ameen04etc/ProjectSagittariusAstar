@@ -17,7 +17,7 @@ from PySide6.QtGui import     (QPainter, QColor, QPen,
                                QStandardItemModel, QStandardItem,
                                QFontMetrics, QKeySequence, QTextFormat,
                                QTextCursor, QTextBlock, QShortcut,
-                               QTextCharFormat, QSyntaxHighlighter)
+                               QTextCharFormat, QSyntaxHighlighter, QGuiApplication)
 from enum import Enum, auto
 from typing import cast
 from pathlib import Path
@@ -347,6 +347,8 @@ class CodeEditor(QPlainTextEdit):
 
         self.incompleteStacks = []
         self.brackets = {}
+        self.bracketStack = []
+        self.blockBracketStack = [[]]
 
     def paintEvent(self, e):
         painter = QPainter(self.viewport())
@@ -691,7 +693,10 @@ class CodeEditor(QPlainTextEdit):
                 incremental = False
                 )
             self.OldText = self.toPlainText()
+            lineCount = self.document().blockCount()
 
+            self.blockBracketStack = [[] for _ in range(lineCount)]
+            
             QTimer.singleShot(50, lambda: self.codeHighlight(refresh = True))
 
             # QTimer.singleShot(50, self.Language.Highlighter.rehighlight)
@@ -825,216 +830,309 @@ class CodeEditor(QPlainTextEdit):
         self.OldText = newText
 
     def bracketMatching(self, affectedBlocks):
-        dStack = []
-        dFormat = QTextCharFormat()
-        maxBlocNo = max(affectedBlocks)
-        minBlocNo = min(affectedBlocks)
-        tempBrackets  = {}
+        # firstAffected = min(affectedBlocks)
+        # lastAffected  = max(affectedBlocks)
 
-        nowComplete = []
+        # if firstAffected == 0:
+        #     preStack = []
+        # else:
+        #     preStack =  self.blockBracketStack[firstAffected - 1]
 
-        for blockNo in self.incompleteStacks:
-            print("PRE")
-            compList = [0, 0, 0]
-            if blockNo in affectedBlocks or blockNo > minBlocNo:
-                continue
+        # for blockNo in affectedBlocks:
+        #     block = self.document().findBlockByNumber(blockNo)
+        #     text = block.text()
 
-            block = self.document().findBlockByNumber(blockNo)
-            blockPosition = block.position()
-            text = block.text()
-            print("block", blockNo, "-->", text)
+        #     if preStack and preStack[-1] == "#":
+        #         preStack.pop(-1)
 
-            for i, ch in enumerate(text):
-                absPosition = blockPosition + i
-                if ch in {"(", "{", "["}:
-                    node = self.fetchCursorNode(position = absPosition)
-                    if  node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
-                        continue
+        #     for i, ch in enumerate(text):
+        #         if ch == "#":
+        #             preStack.append(ch)
+        #             break
 
-                    if   ch == "(": compList[0] += 1
-                    elif ch == "{": compList[1] += 1
-                    elif ch == "[": compList[2] += 1
+        #         elif ch in {"'", '"'}:
+        #             if not preStack:
+        #                 preStack.append(ch)
+        #             elif preStack[-1] != ch:
+        #                 preStack.append(ch)
+        #             else:
+        #                 preStack.pop(-1)
 
-                    dStack.append((ch, blockNo, i))
-                    tempBrackets.update({
-                        (blockNo, i) : QColor("#FF0000")
-                    })
+        #         elif ch in {"(", "{", "["}:
+        #             if not preStack:
+        #                 preStack.append(ch)
+        #             elif preStack[-1] not in {"'", '"'}:
+        #                 preStack.append(ch)
 
-                elif ch in {")", "}", "]"}:
-                    node = self.fetchCursorNode(position = absPosition)
-                    if node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
-                        continue
+        #         elif ch in {")", "}", "]"}:
+        #             if preStack and preStack[-1] not in {"'", '"'}:
+        #                 while preStack:
+        #                     bracket = preStack.pop(-1)
+        #                     if bracket == INVERT_PAIR_BRACE[ch]:
+        #                         break
 
-                    match = False
+        #     if blockNo != lastAffected:
+        #         self.blockBracketStack[blockNo + 1] = preStack.copy()
 
-                    if   ch == ")": compList[0] -= 1
-                    elif ch == "}": compList[1] -= 1
-                    elif ch == "]": compList[2] -= 1
+        #     blockNo = lastAffected
+        #     while True:
+        #         if blockNo >= self.document().blockCount() - 1:
+        #             break
+        #         elif preStack == self.blockBracketStack[blockNo + 1]:
+        #             break
+        #         else:
+        #             self.blockBracketStack[blockNo + 1] = preStack.copy()
+        #             blockNo += 1
 
-                    while dStack:
-                        opening, blockNumber, position = dStack.pop()
+        #             block = self.document().findBlockByNumber(blockNo)
+        #             text = block.text()
 
-                        if ch == PAIR_BRACE[opening]:
-                            match = True
-                            level = len(dStack)
-                            color = RAINBOW_COLORS[level % len(RAINBOW_COLORS)]
+        #             for i, ch in enumerate(text):
+        #                 if ch == "#":
+        #                     preStack.append(ch)
+        #                     break
 
-                            tempBrackets.update({
-                                (blockNumber, position) : color,
-                                (blockNo, i)     : color
-                            })
+        #                 elif ch in {"'", '"'}:
+        #                     if not preStack:
+        #                         preStack.append(ch)
+        #                     elif preStack[-1] != ch:
+        #                         preStack.append(ch)
+        #                     else:
+        #                         preStack.pop(-1)
 
-                            break
+        #                 elif ch in {"(", "{", "["}:
+        #                     if not preStack:
+        #                         preStack.append(ch)
+        #                     elif preStack[-1] not in {"'", '"'}:
+        #                         preStack.append(ch)
 
-                    if not match:
-                        tempBrackets.update({
-                            blockNo : [i, QColor("#FF0000")]
-                        })
+        #                 elif ch in {")", "}", "]"}:
+        #                     if preStack and preStack[-1] not in {"'", '"'}:
+        #                         while preStack:
+        #                             bracket = preStack.pop(-1)
+        #                             if bracket == INVERT_PAIR_BRACE[ch]:
+        #                                 break
 
-            if compList == [0, 0, 0]:
-                nowComplete.append(blockNo)
+        pass
 
-        self.incompleteStacks[:] = [
-            blockNo
-            for blockNo in self.incompleteStacks
-            if blockNo not in nowComplete
-        ]
-        print("NowComplete =", nowComplete)
 
-        print("PRE incomplete stacks =", self.incompleteStacks)
 
-        for blockNo in affectedBlocks:
-            print("MID")
-            block = self.document().findBlockByNumber(blockNo)
-            blockPosition = block.position()
-            text = block.text()
 
-            isComplete = [0, 0, 0]
 
-            for i, ch in enumerate(text):
-                absPosition = blockPosition + i
-                if ch in {"(", "{", "["}:
-                    node = self.fetchCursorNode(position = absPosition)
-                    if  node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
-                        continue
 
-                    if   ch == "(": isComplete[0] += 1
-                    elif ch == "{": isComplete[1] += 1
-                    elif ch == "[": isComplete[2] += 1
 
-                    dStack.append((ch, blockNo, i))
-                    tempBrackets.update({
-                        (blockNo, i) : QColor("#FF0000")
-                    })
+
+
+        # dStack = []
+        # dFormat = QTextCharFormat()
+        # maxBlocNo = max(affectedBlocks)
+        # minBlocNo = min(affectedBlocks)
+        # tempBrackets  = {}
+
+        # nowComplete = []
+
+        # for blockNo in self.incompleteStacks:
+        #     # print("PRE")
+        #     compList = [0, 0, 0]
+        #     if blockNo in affectedBlocks or blockNo > minBlocNo:
+        #         continue
+
+        #     block = self.document().findBlockByNumber(blockNo)
+        #     blockPosition = block.position()
+        #     text = block.text()
+        #     # print("block", blockNo, "-->", text)
+
+        #     for i, ch in enumerate(text):
+        #         absPosition = blockPosition + i
+        #         if ch in {"(", "{", "["}:
+        #             node = self.fetchCursorNode(position = absPosition)
+        #             if  node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
+        #                 continue
+
+        #             if   ch == "(": compList[0] += 1
+        #             elif ch == "{": compList[1] += 1
+        #             elif ch == "[": compList[2] += 1
+
+        #             dStack.append((ch, blockNo, i))
+        #             tempBrackets.update({
+        #                 (blockNo, i) : QColor("#FF0000")
+        #             })
+
+        #         elif ch in {")", "}", "]"}:
+        #             node = self.fetchCursorNode(position = absPosition)
+        #             if node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
+        #                 continue
+
+        #             match = False
+
+        #             if   ch == ")": compList[0] -= 1
+        #             elif ch == "}": compList[1] -= 1
+        #             elif ch == "]": compList[2] -= 1
+
+        #             while dStack:
+        #                 opening, blockNumber, position = dStack.pop()
+
+        #                 if ch == PAIR_BRACE[opening]:
+        #                     match = True
+        #                     level = len(dStack)
+        #                     color = RAINBOW_COLORS[level % len(RAINBOW_COLORS)]
+
+        #                     tempBrackets.update({
+        #                         (blockNumber, position) : color,
+        #                         (blockNo, i)     : color
+        #                     })
+
+        #                     break
+
+        #             if not match:
+        #                 tempBrackets.update({
+        #                     blockNo : [i, QColor("#FF0000")]
+        #                 })
+
+        #     if compList == [0, 0, 0]:
+        #         nowComplete.append(blockNo)
+
+        # self.incompleteStacks[:] = [
+        #     blockNo
+        #     for blockNo in self.incompleteStacks
+        #     if blockNo not in nowComplete
+        # ]
+        # # print("NowComplete =", nowComplete)
+
+        # # print("PRE incomplete stacks =", self.incompleteStacks)
+
+        # for blockNo in affectedBlocks:
+        #     # print("MID")
+        #     block = self.document().findBlockByNumber(blockNo)
+        #     blockPosition = block.position()
+        #     text = block.text()
+
+        #     isComplete = [0, 0, 0]
+
+        #     for i, ch in enumerate(text):
+        #         absPosition = blockPosition + i
+        #         if ch in {"(", "{", "["}:
+        #             node = self.fetchCursorNode(position = absPosition)
+        #             if  node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
+        #                 continue
+
+        #             if   ch == "(": isComplete[0] += 1
+        #             elif ch == "{": isComplete[1] += 1
+        #             elif ch == "[": isComplete[2] += 1
+
+        #             dStack.append((ch, blockNo, i))
+        #             tempBrackets.update({
+        #                 (blockNo, i) : QColor("#FF0000")
+        #             })
                     
-                elif ch in {")", "}", "]"}:
-                    node = self.fetchCursorNode(position = absPosition)
-                    if node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
-                        continue
+        #         elif ch in {")", "}", "]"}:
+        #             node = self.fetchCursorNode(position = absPosition)
+        #             if node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
+        #                 continue
 
-                    match = False
+        #             match = False
 
-                    if   ch == ")": isComplete[0] -= 1
-                    elif ch == "}": isComplete[1] -= 1
-                    elif ch == "]": isComplete[2] -= 1
+        #             if   ch == ")": isComplete[0] -= 1
+        #             elif ch == "}": isComplete[1] -= 1
+        #             elif ch == "]": isComplete[2] -= 1
 
-                    while dStack:
-                        opening, blockNumber, position = dStack.pop()
+        #             while dStack:
+        #                 opening, blockNumber, position = dStack.pop()
 
-                        if ch == PAIR_BRACE[opening]:
-                            match = True
-                            level = len(dStack)
-                            color = RAINBOW_COLORS[level % len(RAINBOW_COLORS)]
-                            dFormat.setForeground(color)
+        #                 if ch == PAIR_BRACE[opening]:
+        #                     match = True
+        #                     level = len(dStack)
+        #                     color = RAINBOW_COLORS[level % len(RAINBOW_COLORS)]
+        #                     dFormat.setForeground(color)
 
-                            tempBrackets.update({
-                                (blockNumber, position) : color,
-                                (blockNo, i)     : color
-                            })
+        #                     tempBrackets.update({
+        #                         (blockNumber, position) : color,
+        #                         (blockNo, i)     : color
+        #                     })
 
-                            break
+        #                     break
 
-                    if not match:
-                        tempBrackets.update({
-                            (blockNo, i) : QColor("#FF0000")
-                        })
-            print("IsComplete Mid =", isComplete)
-            if any(i != 0 for i in isComplete):
-                    if blockNo not in self.incompleteStacks:
-                        self.incompleteStacks.append(blockNo)
-            elif blockNo in self.incompleteStacks:
-                self.incompleteStacks.remove(blockNo)
+        #             if not match:
+        #                 tempBrackets.update({
+        #                     (blockNo, i) : QColor("#FF0000")
+        #                 })
+        #     # print("IsComplete Mid =", isComplete)
+        #     if any(i != 0 for i in isComplete):
+        #             if blockNo not in self.incompleteStacks:
+        #                 self.incompleteStacks.append(blockNo)
+        #     elif blockNo in self.incompleteStacks:
+        #         self.incompleteStacks.remove(blockNo)
 
-        print("MID incomplete stacks =", self.incompleteStacks)
+        # # print("MID incomplete stacks =", self.incompleteStacks)
 
-        for blockNo in self.incompleteStacks:
-            print("POST")
-            compList = [0, 0, 0]
-            if blockNo in affectedBlocks or blockNo < maxBlocNo:
-                continue
- 
-            block = self.document().findBlockByNumber(blockNo)
-            blockPosition = block.position()
-            text = block.text()
+        # for blockNo in self.incompleteStacks:
+        #     # print("POST")
+        #     compList = [0, 0, 0]
+        #     if blockNo in affectedBlocks or blockNo < maxBlocNo:
+        #         continue
 
-            for i, ch in enumerate(text):
-                absPosition = blockPosition + i
-                if ch in {"(", "{", "["}:
-                    node = self.fetchCursorNode(position = absPosition)
-                    if  node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
-                        continue
+        #     block = self.document().findBlockByNumber(blockNo)
+        #     blockPosition = block.position()
+        #     text = block.text()
 
-                    if   ch == "(": compList[0] += 1
-                    elif ch == "{": compList[1] += 1
-                    elif ch == "[": compList[2] += 1
+        #     for i, ch in enumerate(text):
+        #         absPosition = blockPosition + i
+        #         if ch in {"(", "{", "["}:
+        #             node = self.fetchCursorNode(position = absPosition)
+        #             if  node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
+        #                 continue
 
-                    dStack.append((ch, blockNo, i))
-                    tempBrackets.update({
-                        (blockNo, i) : QColor("#FF0000")
-                    })
+        #             if   ch == "(": compList[0] += 1
+        #             elif ch == "{": compList[1] += 1
+        #             elif ch == "[": compList[2] += 1
 
-                elif ch in {")", "}", "]"}:
-                    node = self.fetchCursorNode(position = absPosition)
-                    if node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
-                        continue
+        #             dStack.append((ch, blockNo, i))
+        #             tempBrackets.update({
+        #                 (blockNo, i) : QColor("#FF0000")
+        #             })
 
-                    match = False
+        #         elif ch in {")", "}", "]"}:
+        #             node = self.fetchCursorNode(position = absPosition)
+        #             if node.type in {"comment", "string", "string_start", "string_content", "escape_sequence"}:
+        #                 continue
 
-                    if   ch == ")": compList[0] -= 1
-                    elif ch == "}": compList[1] -= 1
-                    elif ch == "]": compList[2] -= 1
+        #             match = False
 
-                    while dStack:
-                        opening, blockNumber, position = dStack.pop()
+        #             if   ch == ")": compList[0] -= 1
+        #             elif ch == "}": compList[1] -= 1
+        #             elif ch == "]": compList[2] -= 1
 
-                        if ch == PAIR_BRACE[opening]:
-                            match = True
-                            level = len(dStack)
-                            color = RAINBOW_COLORS[level % len(RAINBOW_COLORS)]
+        #             while dStack:
+        #                 opening, blockNumber, position = dStack.pop()
 
-                            tempBrackets.update({
-                                (blockNumber, position) : color,
-                                (blockNo, i)            : color
-                            })
+        #                 if ch == PAIR_BRACE[opening]:
+        #                     match = True
+        #                     level = len(dStack)
+        #                     color = RAINBOW_COLORS[level % len(RAINBOW_COLORS)]
 
-                            break
+        #                     tempBrackets.update({
+        #                         (blockNumber, position) : color,
+        #                         (blockNo, i)            : color
+        #                     })
 
-                    if not match:
-                        tempBrackets.update({
-                            (blockNo, i) : QColor("#FF0000")
-                        })
+        #                     break
 
-            if compList == [0, 0, 0]:
-                nowComplete.append(blockNo)
+        #             if not match:
+        #                 tempBrackets.update({
+        #                     (blockNo, i) : QColor("#FF0000")
+        #                 })
 
-        self.incompleteStacks[:] = [
-            blockNo
-            for blockNo in self.incompleteStacks
-            if blockNo not in nowComplete
-        ]
+        # #     if compList == [0, 0, 0]:
+        # #         nowComplete.append(blockNo)
 
-        print("POST incomplete stacks =", self.incompleteStacks)
-        self.brackets = tempBrackets
+        # # self.incompleteStacks[:] = [
+        # #     blockNo
+        # #     for blockNo in self.incompleteStacks
+        # #     if blockNo not in nowComplete
+        # # ]
+
+        # # # print("POST incomplete stacks =", self.incompleteStacks)
+        # # self.brackets = tempBrackets
 
         # for key in self.brackets:
         #     print(key, self.brackets[key])
@@ -1119,6 +1217,47 @@ class CodeEditor(QPlainTextEdit):
         )
 
     def keyPressEvent(self, e):
+        cursor        = self.textCursor()
+        cursorAt      = self.textCursor().block().blockNumber()
+        ch = e.text()
+
+        if ch not in {'', '\t'}:
+            if cursor.hasSelection():
+                selectStartAt = self.Selection.FirstBlock.blockNumber()
+                selectEndAt   = self.Selection.LastBlock.blockNumber()
+                cursorAt      = selectStartAt
+
+                del self.blockBracketStack[selectStartAt + 1 : selectEndAt + 1]
+
+                if ch == '\r':
+                    self.blockBracketStack.insert((cursorAt + 1), [])
+
+                elif ch == '\x16':
+                    pastedText = QGuiApplication.clipboard().text()
+                    linestoAdd = pastedText.count('\n')
+
+                    for _ in range(linestoAdd):
+                        self.blockBracketStack.insert((cursorAt + 1), [])
+
+            else:
+                if ch == '\r':
+                    self.blockBracketStack.insert(cursorAt, [])
+
+                elif ch == '\x08' and cursor.position() != 0 and cursor.atBlockStart():
+                    self.blockBracketStack.pop(cursorAt)
+
+                elif ch == '\x7f' and (self.document().blockCount() > (cursorAt + 1)) and cursor.atBlockEnd():
+                    self.blockBracketStack.pop(cursorAt + 1)
+
+                elif ch == '\x16':
+                    pastedText = QGuiApplication.clipboard().text()
+                    linestoAdd = pastedText.count("\n")
+                    print("linesTOADD =", linestoAdd)
+
+                    for _ in range(linestoAdd):
+                        self.blockBracketStack.insert((cursorAt + 1), [])
+
+        print(self.blockBracketStack)
 
         if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             cursor      = self.textCursor()
@@ -1182,11 +1321,13 @@ class CodeEditor(QPlainTextEdit):
     def mousePressEvent(self, e):
         super().mousePressEvent(e)
         self.Context.fetchCursorContext()
+        # for stackInput in self.blockBracketStack:
+        #     print(stackInput)
         print("------")
         if e.button() == Qt.RightButton:
             self.Language.syntax.printSyntax()
         node = self.fetchCursorNode(position = self.textCursor().position())
-        print(node.type)
+        # print(node.type)
         # print(self.document().characterCount())
 
 
@@ -1381,6 +1522,7 @@ class PythonLanguage(codeLanguage):
 
 
 class syntaxHighlighter(QSyntaxHighlighter):
+
     def __init__(self, document : QPlainTextEdit.document, syntax, editor : CodeEditor):
         super().__init__(document)
         self.syntax = syntax
@@ -1395,6 +1537,8 @@ class syntaxHighlighter(QSyntaxHighlighter):
 
         blockNumber = self.currentBlock().blockNumber()
         blockPosition = self.currentBlock().position()
+
+        # print("BLOCK NO =", blockNumber)
 
         line_bytes = text.encode("utf-8")
 
