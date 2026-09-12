@@ -353,11 +353,11 @@ class CodeEditor(QPlainTextEdit):
         self.oldNode = self.Language.syntax.Tree.root_node
         self.newNode = self.Language.syntax.Tree.root_node
 
-        self.incompleteStacks = []
-        self.brackets = {}
-        self.bracketStack = []
-        self.blockBracketStack = [[]]
-        self.bracketMap = [{}]
+        # self.incompleteStacks = []
+        # self.brackets = {}
+        # self.bracketStack = []
+        # self.blockBracketStack = [[]]
+        # self.bracketMap = [{}]
 
         blockdata = BlockBracketData()
         self.firstVisibleBlock().setUserData(blockdata)
@@ -864,9 +864,9 @@ class CodeEditor(QPlainTextEdit):
             if preStack and preStack[-1][0] == "#":
                 preStack.pop(-1)
 
-            # print("Block =", blockNo)
+            print("Block =", blockNo)
             for i, ch in enumerate(text):
-                # print("ch = ", ch, "prestack =", preStack)
+                print("ch = ", ch, "prestack =", preStack)
                 if ch == "#":
                     if preStack:
                         if preStack[-1][0] not in {"'", '"'}:
@@ -954,12 +954,19 @@ class CodeEditor(QPlainTextEdit):
                 blockNo += 1
                 blockData = BlockBracketData()
                 blockData.bracketStack = preStack.copy()
+                print("Block =", blockNo)
 
                 text = block.text()
                 for i, ch in enumerate(text):
+                    print("ch = ", ch, "prestack =", preStack)
                     if ch == "#":
-                        preStack.append([ch, blockNo, i])
-                        break
+                        if preStack:
+                            if preStack[-1][0] not in {"'", '"'}:
+                                preStack.append([ch, blockNo, i])
+                                break
+                        else:
+                            preStack.append([ch, blockNo, i])
+                            break
 
                     elif ch in {"'", '"'}:
                         if not preStack:
@@ -1321,47 +1328,47 @@ class CodeEditor(QPlainTextEdit):
         cursorAt      = self.textCursor().block().blockNumber()
         ch = e.text()
 
-        if ch not in {'', '\t'}:
-            if cursor.hasSelection():
-                selectStartAt = self.Selection.FirstBlock.blockNumber()
-                selectEndAt   = self.Selection.LastBlock.blockNumber()
-                cursorAt      = selectStartAt
+        # if ch not in {'', '\t'}:
+        #     if cursor.hasSelection():
+        #         selectStartAt = self.Selection.FirstBlock.blockNumber()
+        #         selectEndAt   = self.Selection.LastBlock.blockNumber()
+        #         cursorAt      = selectStartAt
 
-                del self.blockBracketStack[selectStartAt + 1 : selectEndAt + 1]
-                del self.bracketMap[selectStartAt + 1 : selectEndAt + 1]
+        #         del self.blockBracketStack[selectStartAt + 1 : selectEndAt + 1]
+        #         del self.bracketMap[selectStartAt + 1 : selectEndAt + 1]
 
-                if ch == '\r':
-                    self.blockBracketStack.insert((cursorAt + 1), [])
-                    self.bracketMap.insert((cursorAt + 1), {})
+        #         if ch == '\r':
+        #             self.blockBracketStack.insert((cursorAt + 1), [])
+        #             self.bracketMap.insert((cursorAt + 1), {})
 
-                elif ch == '\x16':
-                    pastedText = QGuiApplication.clipboard().text()
-                    linestoAdd = pastedText.count('\n')
+        #         elif ch == '\x16':
+        #             pastedText = QGuiApplication.clipboard().text()
+        #             linestoAdd = pastedText.count('\n')
 
-                    for _ in range(linestoAdd):
-                        self.blockBracketStack.insert((cursorAt + 1), [])
-                        self.bracketMap.insert((cursorAt + 1), {})
+        #             for _ in range(linestoAdd):
+        #                 self.blockBracketStack.insert((cursorAt + 1), [])
+        #                 self.bracketMap.insert((cursorAt + 1), {})
 
-            else:
-                if ch == '\r':
-                    self.blockBracketStack.insert((cursorAt + 1), [])
-                    self.bracketMap.insert((cursorAt + 1), {})
+        #     else:
+        #         if ch == '\r':
+        #             self.blockBracketStack.insert((cursorAt + 1), [])
+        #             self.bracketMap.insert((cursorAt + 1), {})
 
-                elif ch == '\x08' and cursor.position() != 0 and cursor.atBlockStart():
-                    self.blockBracketStack.pop(cursorAt)
-                    self.bracketMap.pop(cursorAt)
+        #         elif ch == '\x08' and cursor.position() != 0 and cursor.atBlockStart():
+        #             self.blockBracketStack.pop(cursorAt)
+        #             self.bracketMap.pop(cursorAt)
 
-                elif ch == '\x7f' and (self.document().blockCount() > (cursorAt + 1)) and cursor.atBlockEnd():
-                    self.blockBracketStack.pop(cursorAt + 1)
-                    self.bracketMap.pop(cursorAt + 1)
+        #         elif ch == '\x7f' and (self.document().blockCount() > (cursorAt + 1)) and cursor.atBlockEnd():
+        #             self.blockBracketStack.pop(cursorAt + 1)
+        #             self.bracketMap.pop(cursorAt + 1)
 
-                elif ch == '\x16':
-                    pastedText = QGuiApplication.clipboard().text()
-                    linestoAdd = pastedText.count("\n")
+        #         elif ch == '\x16':
+        #             pastedText = QGuiApplication.clipboard().text()
+        #             linestoAdd = pastedText.count("\n")
 
-                    for _ in range(linestoAdd):
-                        self.blockBracketStack.insert((cursorAt + 1), [])
-                        self.bracketMap.insert((cursorAt + 1), {})
+        #             for _ in range(linestoAdd):
+        #                 self.blockBracketStack.insert((cursorAt + 1), [])
+        #                 self.bracketMap.insert((cursorAt + 1), {})
 
         if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             cursor      = self.textCursor()
@@ -1431,7 +1438,7 @@ class CodeEditor(QPlainTextEdit):
         if e.button() == Qt.RightButton:
             self.Language.syntax.printSyntax()
         node = self.fetchCursorNode(position = self.textCursor().position())
-        # print(node.type)
+        print(node.type)
         # print(self.document().characterCount())
 
 
