@@ -349,6 +349,7 @@ class CodeEditor(QPlainTextEdit):
         self.brackets = {}
         self.bracketStack = []
         self.blockBracketStack = [[]]
+        self.bracketMap = [{}]
 
     def paintEvent(self, e):
         painter = QPainter(self.viewport())
@@ -696,6 +697,7 @@ class CodeEditor(QPlainTextEdit):
             lineCount = self.document().blockCount()
 
             self.blockBracketStack = [[] for _ in range(lineCount)]
+            self.bracketMap        = [{} for _ in range(lineCount)]
             
             QTimer.singleShot(50, lambda: self.codeHighlight(refresh = True))
 
@@ -830,90 +832,153 @@ class CodeEditor(QPlainTextEdit):
         self.OldText = newText
 
     def bracketMatching(self, affectedBlocks):
-        # firstAffected = min(affectedBlocks)
-        # lastAffected  = max(affectedBlocks)
+        # print("Old =", self.blockBracketStack)
+        firstAffected = min(affectedBlocks)
+        lastAffected  = max(affectedBlocks)
 
-        # if firstAffected == 0:
-        #     preStack = []
-        # else:
-        #     preStack =  self.blockBracketStack[firstAffected - 1]
+        if firstAffected == 0:
+            preStack = []
+        else:
+            preStack =  self.blockBracketStack[firstAffected].copy()
 
-        # for blockNo in affectedBlocks:
-        #     block = self.document().findBlockByNumber(blockNo)
-        #     text = block.text()
+        # print("PreStack =", preStack)
 
-        #     if preStack and preStack[-1] == "#":
-        #         preStack.pop(-1)
+        for blockNo in affectedBlocks:
+            self.bracketMap[blockNo].clear()
+            block = self.document().findBlockByNumber(blockNo)
+            text = block.text()
 
-        #     for i, ch in enumerate(text):
-        #         if ch == "#":
-        #             preStack.append(ch)
-        #             break
+            if preStack and preStack[-1][0] == "#":
+                preStack.pop(-1)
 
-        #         elif ch in {"'", '"'}:
-        #             if not preStack:
-        #                 preStack.append(ch)
-        #             elif preStack[-1] != ch:
-        #                 preStack.append(ch)
-        #             else:
-        #                 preStack.pop(-1)
+            for i, ch in enumerate(text):
+                if ch == "#":
+                    preStack.append([ch, blockNo, i])
+                    break
 
-        #         elif ch in {"(", "{", "["}:
-        #             if not preStack:
-        #                 preStack.append(ch)
-        #             elif preStack[-1] not in {"'", '"'}:
-        #                 preStack.append(ch)
+                elif ch in {"'", '"'}:
+                    if not preStack:
+                        preStack.append([ch, blockNo, i])
+                    elif preStack[-1][0] != ch:
+                        preStack.append([ch, blockNo, i])
+                    else:
+                        preStack.pop(-1)
 
-        #         elif ch in {")", "}", "]"}:
-        #             if preStack and preStack[-1] not in {"'", '"'}:
-        #                 while preStack:
-        #                     bracket = preStack.pop(-1)
-        #                     if bracket == INVERT_PAIR_BRACE[ch]:
-        #                         break
+                elif ch in {"(", "{", "["}:
+                    if not preStack:
+                        preStack.append([ch, blockNo, i])
 
-        #     if blockNo != lastAffected:
-        #         self.blockBracketStack[blockNo + 1] = preStack.copy()
+                        self.bracketMap[blockNo].update({
+                            i : [ch, QColor("#FF0000")]
+                        })
+                    
+                    elif preStack[-1][0] not in {"'", '"'}:
+                        preStack.append([ch, blockNo, i])
 
-        #     blockNo = lastAffected
-        #     while True:
-        #         if blockNo >= self.document().blockCount() - 1:
-        #             break
-        #         elif preStack == self.blockBracketStack[blockNo + 1]:
-        #             break
-        #         else:
-        #             self.blockBracketStack[blockNo + 1] = preStack.copy()
-        #             blockNo += 1
+                        self.bracketMap[blockNo].update({
+                            i : [ch, QColor("#FF0000")]
+                        })
 
-        #             block = self.document().findBlockByNumber(blockNo)
-        #             text = block.text()
+                elif ch in {")", "}", "]"}:
+                    if preStack and preStack[-1][0] not in {"'", '"'}:
+                        temp = []
+                        match = False
+                        while preStack:
+                            bracket, row, col = preStack.pop(-1)
+                            temp.append([bracket, row, col])
+                            if bracket == INVERT_PAIR_BRACE[ch]:
+                                match = True
+                                level = len(preStack)
+                                color = RAINBOW_COLORS[level % len(RAINBOW_COLORS)]
+                                self.bracketMap[blockNo].update({
+                                    i : [ch, color]
+                                })
+                                self.bracketMap[row].update({
+                                    col : [bracket, color]
+                                })
+                                break
 
-        #             for i, ch in enumerate(text):
-        #                 if ch == "#":
-        #                     preStack.append(ch)
-        #                     break
+                        if not match:
+                            self.bracketMap[blockNo].update({
+                                i : [ch, QColor("#FF0000")]
+                            })
+                            preStack.extend(reversed(temp))
 
-        #                 elif ch in {"'", '"'}:
-        #                     if not preStack:
-        #                         preStack.append(ch)
-        #                     elif preStack[-1] != ch:
-        #                         preStack.append(ch)
-        #                     else:
-        #                         preStack.pop(-1)
+            # print("BlockNo =", blockNo, "PreStack =", preStack)
+            if blockNo != lastAffected:
+                # print("enetered condition")
+                self.blockBracketStack[blockNo + 1] = preStack.copy()
+            
+            # print("Iterim =", self.blockBracketStack)
 
-        #                 elif ch in {"(", "{", "["}:
-        #                     if not preStack:
-        #                         preStack.append(ch)
-        #                     elif preStack[-1] not in {"'", '"'}:
-        #                         preStack.append(ch)
 
-        #                 elif ch in {")", "}", "]"}:
-        #                     if preStack and preStack[-1] not in {"'", '"'}:
-        #                         while preStack:
-        #                             bracket = preStack.pop(-1)
-        #                             if bracket == INVERT_PAIR_BRACE[ch]:
-        #                                 break
+        blockNo = lastAffected
+        while True:
+            if blockNo >= self.document().blockCount() - 1:
+                break
+            elif preStack == self.blockBracketStack[blockNo + 1]:
+                break
+            else:
+                self.blockBracketStack[blockNo + 1] = preStack.copy()
+                blockNo += 1
 
-        pass
+                block = self.document().findBlockByNumber(blockNo)
+                text = block.text()
+
+                for i, ch in enumerate(text):
+                    if ch == "#":
+                        preStack.append([ch, blockNo, i])
+                        break
+
+                    elif ch in {"'", '"'}:
+                        if not preStack:
+                            preStack.append([ch, blockNo, i])
+                        elif preStack[-1][0] != ch:
+                            preStack.append([ch, blockNo, i])
+                        else:
+                            preStack.pop(-1)
+
+                    elif ch in {"(", "{", "["}:
+                        if not preStack:
+                            preStack.append([ch, blockNo, i])
+
+                            self.bracketMap[blockNo].update({
+                                i : [ch, QColor("#FF0000")]
+                            })
+
+                        elif preStack[-1][0] not in {"'", '"'}:
+                            preStack.append([ch, blockNo, i])
+
+                            self.bracketMap[blockNo].update({
+                                i : [ch, QColor("#FF0000")]
+                            })
+
+                    elif ch in {")", "}", "]"}:
+                        if preStack and preStack[-1][0] not in {"'", '"'}:
+                            temp = []
+                            match = False
+                            while preStack:
+                                bracket, row, col = preStack.pop(-1)
+                                temp.append([bracket, row, col])
+                                if bracket == INVERT_PAIR_BRACE[ch]:
+                                    match = True
+                                    level = len(preStack)
+                                    color = RAINBOW_COLORS[level % len(RAINBOW_COLORS)]
+                                    self.bracketMap[blockNo].update({
+                                        i : [ch, color]
+                                    })
+                                    self.bracketMap[row].update({
+                                        col : [bracket, color]
+                                    })
+                                    break
+
+                            if not match:
+                                self.bracketMap[blockNo].update({
+                                    i : [ch, QColor("#FF0000")]
+                                })
+                                preStack.extend(reversed(temp))
+
+        # print("Updated =", self.blockBracketStack)
 
 
 
@@ -1122,17 +1187,17 @@ class CodeEditor(QPlainTextEdit):
         #                     (blockNo, i) : QColor("#FF0000")
         #                 })
 
-        # #     if compList == [0, 0, 0]:
-        # #         nowComplete.append(blockNo)
+        #     if compList == [0, 0, 0]:
+        #         nowComplete.append(blockNo)
 
-        # # self.incompleteStacks[:] = [
-        # #     blockNo
-        # #     for blockNo in self.incompleteStacks
-        # #     if blockNo not in nowComplete
-        # # ]
+        # self.incompleteStacks[:] = [
+        #     blockNo
+        #     for blockNo in self.incompleteStacks
+        #     if blockNo not in nowComplete
+        # ]
 
-        # # # print("POST incomplete stacks =", self.incompleteStacks)
-        # # self.brackets = tempBrackets
+        # print("POST incomplete stacks =", self.incompleteStacks)
+        # self.brackets = tempBrackets
 
         # for key in self.brackets:
         #     print(key, self.brackets[key])
@@ -1228,9 +1293,11 @@ class CodeEditor(QPlainTextEdit):
                 cursorAt      = selectStartAt
 
                 del self.blockBracketStack[selectStartAt + 1 : selectEndAt + 1]
+                del self.bracketMap[selectStartAt + 1 : selectEndAt + 1]
 
                 if ch == '\r':
                     self.blockBracketStack.insert((cursorAt + 1), [])
+                    self.bracketMap.insert((cursorAt + 1), {})
 
                 elif ch == '\x16':
                     pastedText = QGuiApplication.clipboard().text()
@@ -1238,26 +1305,28 @@ class CodeEditor(QPlainTextEdit):
 
                     for _ in range(linestoAdd):
                         self.blockBracketStack.insert((cursorAt + 1), [])
+                        self.bracketMap.insert((cursorAt + 1), {})
 
             else:
                 if ch == '\r':
-                    self.blockBracketStack.insert(cursorAt, [])
+                    self.blockBracketStack.insert((cursorAt + 1), [])
+                    self.bracketMap.insert((cursorAt + 1), {})
 
                 elif ch == '\x08' and cursor.position() != 0 and cursor.atBlockStart():
                     self.blockBracketStack.pop(cursorAt)
+                    self.bracketMap.pop(cursorAt)
 
                 elif ch == '\x7f' and (self.document().blockCount() > (cursorAt + 1)) and cursor.atBlockEnd():
                     self.blockBracketStack.pop(cursorAt + 1)
+                    self.bracketMap.pop(cursorAt + 1)
 
                 elif ch == '\x16':
                     pastedText = QGuiApplication.clipboard().text()
                     linestoAdd = pastedText.count("\n")
-                    print("linesTOADD =", linestoAdd)
 
                     for _ in range(linestoAdd):
                         self.blockBracketStack.insert((cursorAt + 1), [])
-
-        print(self.blockBracketStack)
+                        self.bracketMap.insert((cursorAt + 1), {})
 
         if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             cursor      = self.textCursor()
@@ -1494,7 +1563,7 @@ class PythonLanguage(codeLanguage):
         self.syntax      = syntaxTree(Language(tree_sitter_python.language()))
         self.Highlighter = syntaxHighlighter(document, self.syntax, editor)
         self.client      = LSPClient()
-    
+
     def nextIndentation(self, cursor : QTextCursor):
         block = cursor.block()
         preText = block.text()[:cursor.positionInBlock()]
@@ -1543,7 +1612,6 @@ class syntaxHighlighter(QSyntaxHighlighter):
         line_bytes = text.encode("utf-8")
 
         stack = [self.syntax.Tree.root_node]
-        level = 0
 
         while stack:
             currentNode = stack.pop()
@@ -1630,10 +1698,9 @@ class syntaxHighlighter(QSyntaxHighlighter):
                     pass
 
         dFormat = QTextCharFormat()
-        for position, color in self.editor.brackets.items():
-            if position[0] == blockNumber:
-                dFormat.setForeground(color)
-                self.setFormat(position[1], 1, dFormat)
+        for position, data in self.editor.bracketMap[blockNumber].items():
+            dFormat.setForeground(data[1])
+            self.setFormat(position, 1, dFormat)
 
 
 class readBufferState(Enum):
