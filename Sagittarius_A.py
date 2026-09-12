@@ -17,9 +17,8 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QPalette, QPixmap, QRadialGradient, QTransform)
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame, QHBoxLayout,
     QHeaderView, QLayout, QLineEdit, QMainWindow,
-    QPlainTextEdit, QSizePolicy, QSplitter, QStackedWidget,
-    QTabWidget, QToolButton, QTreeView, QVBoxLayout,
-    QWidget)
+    QSizePolicy, QSplitter, QStackedWidget, QTabWidget,
+    QToolButton, QTreeView, QVBoxLayout, QWidget)
 
 from pathlineedit import PathLineEdit
 from vpushbutton import VPushButton
@@ -619,10 +618,10 @@ class Ui_SagittariusA(object):
         self.horizontalLayout.setSpacing(0)
         self.horizontalLayout.setObjectName(u"horizontalLayout")
         self.horizontalLayout.setContentsMargins(0, 0, 0, 0)
-        self.plainTextEdit = QPlainTextEdit(self.tab_2)
-        self.plainTextEdit.setObjectName(u"plainTextEdit")
+        self.codeWidget = QWidget(self.tab_2)
+        self.codeWidget.setObjectName(u"codeWidget")
 
-        self.horizontalLayout.addWidget(self.plainTextEdit)
+        self.horizontalLayout.addWidget(self.codeWidget)
 
         self.tabWidget_2.addTab(self.tab_2, "")
         self.tab_3 = QWidget()

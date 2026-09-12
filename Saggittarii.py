@@ -16,6 +16,7 @@ import os
 import numpy as np
 from supernovaEngine import *
 from epsilonMajoris import *
+from anNaylam import *
 
 
 class MainWindow(QMainWindow):
@@ -34,6 +35,12 @@ class MainWindow(QMainWindow):
         terminal_layout = QVBoxLayout(self.ui.terminalout)
         terminal_layout.setContentsMargins(0, 0, 0, 0)
         terminal_layout.addWidget(self.Terminal)
+
+        codeEdit = MasterWidget(parent = self.ui.codeWidget)
+        layout = QVBoxLayout(self.ui.codeWidget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(codeEdit)
 
 
         self.x        = np.linspace(0,10,200000)

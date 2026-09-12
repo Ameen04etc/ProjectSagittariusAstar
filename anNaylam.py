@@ -182,21 +182,6 @@ class BlockBracketData(QTextBlockUserData):
         self.bracketStack = []
 
 
-class MasterWidget(QWidget):
-
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.editor = CodeEditor(self)
-        self.LayoutConfig()
-
-    def LayoutConfig(self):
-        Layout = QHBoxLayout(self)
-        Layout.setContentsMargins(0, 0, 0, 0)
-        Layout.setSpacing(0)
-        Layout.addWidget(self.editor.LineWidget)
-        Layout.addWidget(self.editor)
-
-
 class LineNumberArea(QWidget):
     scrollEmit     = Signal(object)
     lineSelectEmit = Signal(int, bool)
@@ -864,9 +849,9 @@ class CodeEditor(QPlainTextEdit):
             if preStack and preStack[-1][0] == "#":
                 preStack.pop(-1)
 
-            print("Block =", blockNo)
+            # print("Block =", blockNo)
             for i, ch in enumerate(text):
-                print("ch = ", ch, "prestack =", preStack)
+                # print("ch = ", ch, "prestack =", preStack)
                 if ch == "#":
                     if preStack:
                         if preStack[-1][0] not in {"'", '"'}:
@@ -917,10 +902,17 @@ class CodeEditor(QPlainTextEdit):
                                 blockDataCurr.bracketMap.update({
                                     i : [ch, color]
                                 })
-                                if block.blockNumber() != refBlock.blockNumber():
+                                if blockNo != refBlock.blockNumber():
                                     refBlock.userData().bracketMap.update({
                                         col : [bracket, color]
                                     })
+
+                                    print(
+                                        "BRACKET MAP CHANGED:",
+                                        refBlock.blockNumber(),
+                                        col,
+                                        color.name()
+                                    )
                                 else:
                                     blockDataCurr.bracketMap.update({
                                         col : [bracket, color]
@@ -937,9 +929,8 @@ class CodeEditor(QPlainTextEdit):
             block.setUserData(blockDataCurr)
 
             # print("CONFIGURED DATA =", block.userData().bracketMap)
-
-            
-
+        
+        newBlocks = []
 
         blockNo = lastAffected
         block = self.document().findBlockByNumber(blockNo)
@@ -954,11 +945,14 @@ class CodeEditor(QPlainTextEdit):
                 blockNo += 1
                 blockData = BlockBracketData()
                 blockData.bracketStack = preStack.copy()
-                print("Block =", blockNo)
+                # print("Block =", blockNo)
+
+                if blockNo not in affectedBlocks and blockNo not in newBlocks:
+                    newBlocks.append(blockNo)
 
                 text = block.text()
                 for i, ch in enumerate(text):
-                    print("ch = ", ch, "prestack =", preStack)
+                    # print("ch = ", ch, "prestack =", preStack)
                     if ch == "#":
                         if preStack:
                             if preStack[-1][0] not in {"'", '"'}:
@@ -1006,9 +1000,20 @@ class CodeEditor(QPlainTextEdit):
                                 blockData.bracketMap.update({
                                     i : [ch, color]
                                 })
-                                refBlock.userData().bracketMap.update({
-                                    col : [bracket, color]
-                                })
+                                if blockNo != refBlock.blockNumber():
+                                    refBlock.userData().bracketMap.update({
+                                        col : [bracket, color]
+                                    })
+                                    print(
+                                        "BRACKET MAP CHANGED:",
+                                        refBlock.blockNumber(),
+                                        col,
+                                        color.name()
+                                    )
+                                else:
+                                    blockData.bracketMap.update({
+                                        col : [bracket, color]
+                                    })
 
                                 break
 
@@ -1021,6 +1026,8 @@ class CodeEditor(QPlainTextEdit):
                 block.setUserData(blockData)
 
         # print("Updated =", self.blockBracketStack)
+
+        return newBlocks
 
 
 
@@ -1251,7 +1258,9 @@ class CodeEditor(QPlainTextEdit):
         if not blocks:
             return
 
-        self.bracketMatching(affectedBlocks = blocks)
+        new = self.bracketMatching(affectedBlocks = blocks)
+        # print("WILL REHIGHLIGHT:", blocks)
+        blocks.extend(new)
 
         chunkLen = 6
 
@@ -1951,30 +1960,47 @@ class LSPDocument:
         self.version    = 1
 
 
-class  MainWindow(QMainWindow):
-    def __init__(self, parent = None):
+
+
+class MasterWidget(QWidget):
+
+    def __init__(self, parent):
         super().__init__(parent)
-        Main = MasterWidget(self)
-        self.setWindowTitle("anNaylam")
-        self.setCentralWidget(Main)
+        self.editor = CodeEditor(self)
+        self.LayoutConfig()
+
+    def LayoutConfig(self):
+        Layout = QHBoxLayout(self)
+        Layout.setContentsMargins(0, 0, 0, 0)
+        Layout.setSpacing(0)
+        Layout.addWidget(self.editor.LineWidget)
+        Layout.addWidget(self.editor)
 
 
-app = QApplication([])
-window = MainWindow()
+# class  MainWindow(QMainWindow):
+#     def __init__(self, parent = None):
+#         super().__init__(parent)
+#         Main = MasterWidget(self)
+#         self.setWindowTitle("anNaylam")
+#         self.setCentralWidget(Main)
 
-window.show()
 
-screen = app.primaryScreen()
-avail = screen.availableGeometry()
+# app = QApplication([])
+# window = MainWindow()
 
-title_bar_height = window.frameGeometry().height() - window.geometry().height()
-border_width = window.frameGeometry().width() - window.geometry().width()
+# window.show()
 
-target_width = (avail.width() // 2) - border_width
-target_height = avail.height() - title_bar_height
+# screen = app.primaryScreen()
+# avail = screen.availableGeometry()
 
-window.resize(target_width, target_height)
-window.move(avail.x() + (avail.width() // 2), avail.y())
+# title_bar_height = window.frameGeometry().height() - window.geometry().height()
+# border_width = window.frameGeometry().width() - window.geometry().width()
 
-sys.exit(app.exec())
+# target_width = (avail.width() // 2) - border_width
+# target_height = avail.height() - title_bar_height
+
+# window.resize(target_width, target_height)
+# window.move(avail.x() + (avail.width() // 2), avail.y())
+
+# sys.exit(app.exec())
 

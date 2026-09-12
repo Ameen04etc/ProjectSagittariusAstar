@@ -1023,7 +1023,7 @@ QPushButton:checked {
               <number>0</number>
              </property>
              <item>
-              <widget class="QPlainTextEdit" name="plainTextEdit"/>
+              <widget class="QWidget" name="codeWidget" native="true"/>
              </item>
             </layout>
            </widget>
