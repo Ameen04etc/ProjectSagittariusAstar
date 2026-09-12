@@ -17,7 +17,8 @@ from PySide6.QtGui import     (QPainter, QColor, QPen,
                                QStandardItemModel, QStandardItem,
                                QFontMetrics, QKeySequence, QTextFormat,
                                QTextCursor, QTextBlock, QShortcut,
-                               QTextCharFormat, QSyntaxHighlighter, QGuiApplication)
+                               QTextCharFormat, QSyntaxHighlighter, QGuiApplication,
+                               QTextBlockUserData)
 from enum import Enum, auto
 from typing import cast
 from pathlib import Path
@@ -172,6 +173,13 @@ class DelimitterArray:
             return True, insideList
 
         return False, insideList
+
+
+class BlockBracketData(QTextBlockUserData):
+    def __init__(self):
+        super().__init__()
+        self.bracketMap = {}
+        self.bracketStack = []
 
 
 class MasterWidget(QWidget):
@@ -350,6 +358,9 @@ class CodeEditor(QPlainTextEdit):
         self.bracketStack = []
         self.blockBracketStack = [[]]
         self.bracketMap = [{}]
+
+        blockdata = BlockBracketData()
+        self.firstVisibleBlock().setUserData(blockdata)
 
     def paintEvent(self, e):
         painter = QPainter(self.viewport())
@@ -694,11 +705,7 @@ class CodeEditor(QPlainTextEdit):
                 incremental = False
                 )
             self.OldText = self.toPlainText()
-            lineCount = self.document().blockCount()
 
-            self.blockBracketStack = [[] for _ in range(lineCount)]
-            self.bracketMap        = [{} for _ in range(lineCount)]
-            
             QTimer.singleShot(50, lambda: self.codeHighlight(refresh = True))
 
             # QTimer.singleShot(50, self.Language.Highlighter.rehighlight)
@@ -826,7 +833,6 @@ class CodeEditor(QPlainTextEdit):
 
         self.codeHighlight(blocks = affectedBlocks)
 
-        print("AFFECTED BLOCKS =", sorted(affectedBlocks))
         print("------------------------")
 
         self.OldText = newText
@@ -836,31 +842,46 @@ class CodeEditor(QPlainTextEdit):
         firstAffected = min(affectedBlocks)
         lastAffected  = max(affectedBlocks)
 
+        firstAffBlock = self.document().findBlockByNumber(firstAffected)
+        lastAffBlock  = self.document().findBlockByNumber(lastAffected)
+
         if firstAffected == 0:
             preStack = []
         else:
-            preStack =  self.blockBracketStack[firstAffected].copy()
+            data = firstAffBlock.userData()
+            preStack = data.bracketStack.copy() if data else []
 
         # print("PreStack =", preStack)
 
+        # print("AFFECTED BLOCKS =", affectedBlocks)
+
         for blockNo in affectedBlocks:
-            self.bracketMap[blockNo].clear()
             block = self.document().findBlockByNumber(blockNo)
             text = block.text()
+            blockDataCurr = BlockBracketData()
+            blockDataCurr.bracketStack = preStack.copy()
 
             if preStack and preStack[-1][0] == "#":
                 preStack.pop(-1)
 
+            # print("Block =", blockNo)
             for i, ch in enumerate(text):
+                # print("ch = ", ch, "prestack =", preStack)
                 if ch == "#":
-                    preStack.append([ch, blockNo, i])
-                    break
+                    if preStack:
+                        if preStack[-1][0] not in {"'", '"'}:
+                            preStack.append([ch, blockNo, i])
+                            break
+                    else:
+                        preStack.append([ch, blockNo, i])
+                        break
 
                 elif ch in {"'", '"'}:
                     if not preStack:
                         preStack.append([ch, blockNo, i])
                     elif preStack[-1][0] != ch:
-                        preStack.append([ch, blockNo, i])
+                        if preStack[-1][0] not in {"'", '"'}:
+                            preStack.append([ch, blockNo, i])
                     else:
                         preStack.pop(-1)
 
@@ -868,14 +889,14 @@ class CodeEditor(QPlainTextEdit):
                     if not preStack:
                         preStack.append([ch, blockNo, i])
 
-                        self.bracketMap[blockNo].update({
+                        blockDataCurr.bracketMap.update({
                             i : [ch, QColor("#FF0000")]
                         })
-                    
+
                     elif preStack[-1][0] not in {"'", '"'}:
                         preStack.append([ch, blockNo, i])
 
-                        self.bracketMap[blockNo].update({
+                        blockDataCurr.bracketMap.update({
                             i : [ch, QColor("#FF0000")]
                         })
 
@@ -886,45 +907,55 @@ class CodeEditor(QPlainTextEdit):
                         while preStack:
                             bracket, row, col = preStack.pop(-1)
                             temp.append([bracket, row, col])
+                            refBlock = self.document().findBlockByNumber(row)
+
                             if bracket == INVERT_PAIR_BRACE[ch]:
                                 match = True
                                 level = len(preStack)
                                 color = RAINBOW_COLORS[level % len(RAINBOW_COLORS)]
-                                self.bracketMap[blockNo].update({
+
+                                blockDataCurr.bracketMap.update({
                                     i : [ch, color]
                                 })
-                                self.bracketMap[row].update({
-                                    col : [bracket, color]
-                                })
+                                if block.blockNumber() != refBlock.blockNumber():
+                                    refBlock.userData().bracketMap.update({
+                                        col : [bracket, color]
+                                    })
+                                else:
+                                    blockDataCurr.bracketMap.update({
+                                        col : [bracket, color]
+                                    })
+
                                 break
 
                         if not match:
-                            self.bracketMap[blockNo].update({
+                            blockDataCurr.bracketMap.update({
                                 i : [ch, QColor("#FF0000")]
                             })
                             preStack.extend(reversed(temp))
 
-            # print("BlockNo =", blockNo, "PreStack =", preStack)
-            if blockNo != lastAffected:
-                # print("enetered condition")
-                self.blockBracketStack[blockNo + 1] = preStack.copy()
+            block.setUserData(blockDataCurr)
+
+            # print("CONFIGURED DATA =", block.userData().bracketMap)
+
             
-            # print("Iterim =", self.blockBracketStack)
 
 
         blockNo = lastAffected
+        block = self.document().findBlockByNumber(blockNo)
         while True:
-            if blockNo >= self.document().blockCount() - 1:
+            nextBlock = block.next()
+            if not nextBlock.isValid():
                 break
-            elif preStack == self.blockBracketStack[blockNo + 1]:
+            elif nextBlock.userData() and preStack == nextBlock.userData().bracketStack:
                 break
             else:
-                self.blockBracketStack[blockNo + 1] = preStack.copy()
+                block = nextBlock
                 blockNo += 1
+                blockData = BlockBracketData()
+                blockData.bracketStack = preStack.copy()
 
-                block = self.document().findBlockByNumber(blockNo)
                 text = block.text()
-
                 for i, ch in enumerate(text):
                     if ch == "#":
                         preStack.append([ch, blockNo, i])
@@ -942,41 +973,45 @@ class CodeEditor(QPlainTextEdit):
                         if not preStack:
                             preStack.append([ch, blockNo, i])
 
-                            self.bracketMap[blockNo].update({
+                            blockData.bracketMap.update({
                                 i : [ch, QColor("#FF0000")]
                             })
 
                         elif preStack[-1][0] not in {"'", '"'}:
                             preStack.append([ch, blockNo, i])
 
-                            self.bracketMap[blockNo].update({
+                            blockData.bracketMap.update({
                                 i : [ch, QColor("#FF0000")]
                             })
 
-                    elif ch in {")", "}", "]"}:
-                        if preStack and preStack[-1][0] not in {"'", '"'}:
-                            temp = []
-                            match = False
-                            while preStack:
-                                bracket, row, col = preStack.pop(-1)
-                                temp.append([bracket, row, col])
-                                if bracket == INVERT_PAIR_BRACE[ch]:
-                                    match = True
-                                    level = len(preStack)
-                                    color = RAINBOW_COLORS[level % len(RAINBOW_COLORS)]
-                                    self.bracketMap[blockNo].update({
-                                        i : [ch, color]
-                                    })
-                                    self.bracketMap[row].update({
-                                        col : [bracket, color]
-                                    })
-                                    break
+                    elif ch in {")", "}", "]"} and preStack and (preStack[-1][0] not in {"'", '"'}):
+                        temp = []
+                        match = False
+                        while preStack:
+                            bracket, row, col = preStack.pop(-1)
+                            temp.append([bracket, row, col])
+                            refBlock = self.document().findBlockByNumber(row)
 
-                            if not match:
-                                self.bracketMap[blockNo].update({
-                                    i : [ch, QColor("#FF0000")]
+                            if bracket == INVERT_PAIR_BRACE[ch]:
+                                match = True
+                                level = len(preStack)
+                                color = RAINBOW_COLORS[level % len(RAINBOW_COLORS)]
+                                blockData.bracketMap.update({
+                                    i : [ch, color]
                                 })
-                                preStack.extend(reversed(temp))
+                                refBlock.userData().bracketMap.update({
+                                    col : [bracket, color]
+                                })
+
+                                break
+
+                        if not match:
+                            blockData.bracketMap.update({
+                                i : [ch, QColor("#FF0000")]
+                            })
+                            preStack.extend(reversed(temp))
+
+                block.setUserData(blockData)
 
         # print("Updated =", self.blockBracketStack)
 
@@ -1698,9 +1733,10 @@ class syntaxHighlighter(QSyntaxHighlighter):
                     pass
 
         dFormat = QTextCharFormat()
-        for position, data in self.editor.bracketMap[blockNumber].items():
-            dFormat.setForeground(data[1])
-            self.setFormat(position, 1, dFormat)
+        if self.currentBlock().userData():
+            for position, data in self.currentBlock().userData().bracketMap.items():
+                dFormat.setForeground(data[1])
+                self.setFormat(position, 1, dFormat)
 
 
 class readBufferState(Enum):
