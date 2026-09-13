@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>436</width>
-    <height>336</height>
+    <width>547</width>
+    <height>426</height>
    </rect>
   </property>
   <property name="maximumSize">
@@ -1001,38 +1001,10 @@ QPushButton:checked {
           <property name="orientation">
            <enum>Qt::Orientation::Vertical</enum>
           </property>
-          <widget class="QTabWidget" name="tabWidget_2">
-           <widget class="QWidget" name="tab_2">
-            <attribute name="title">
-             <string>Tab 1</string>
-            </attribute>
-            <layout class="QHBoxLayout" name="horizontalLayout">
-             <property name="spacing">
-              <number>0</number>
-             </property>
-             <property name="leftMargin">
-              <number>0</number>
-             </property>
-             <property name="topMargin">
-              <number>0</number>
-             </property>
-             <property name="rightMargin">
-              <number>0</number>
-             </property>
-             <property name="bottomMargin">
-              <number>0</number>
-             </property>
-             <item>
-              <widget class="QWidget" name="codeWidget" native="true"/>
-             </item>
-            </layout>
-           </widget>
-           <widget class="QWidget" name="tab_3">
-            <attribute name="title">
-             <string>Tab 2</string>
-            </attribute>
-           </widget>
-          </widget>
+          <property name="handleWidth">
+           <number>5</number>
+          </property>
+          <widget class="QWidget" name="codeWidget" native="true"/>
           <widget class="QWidget" name="terminalout" native="true"/>
          </widget>
         </item>

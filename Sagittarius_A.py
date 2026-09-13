@@ -27,7 +27,7 @@ class Ui_SagittariusA(object):
     def setupUi(self, SagittariusA):
         if not SagittariusA.objectName():
             SagittariusA.setObjectName(u"SagittariusA")
-        SagittariusA.resize(436, 336)
+        SagittariusA.resize(547, 426)
         SagittariusA.setMaximumSize(QSize(16777215, 16777215))
         self.centralwidget = QWidget(SagittariusA)
         self.centralwidget.setObjectName(u"centralwidget")
@@ -610,24 +610,10 @@ class Ui_SagittariusA(object):
         self.splitter = QSplitter(self.Editor)
         self.splitter.setObjectName(u"splitter")
         self.splitter.setOrientation(Qt.Orientation.Vertical)
-        self.tabWidget_2 = QTabWidget(self.splitter)
-        self.tabWidget_2.setObjectName(u"tabWidget_2")
-        self.tab_2 = QWidget()
-        self.tab_2.setObjectName(u"tab_2")
-        self.horizontalLayout = QHBoxLayout(self.tab_2)
-        self.horizontalLayout.setSpacing(0)
-        self.horizontalLayout.setObjectName(u"horizontalLayout")
-        self.horizontalLayout.setContentsMargins(0, 0, 0, 0)
-        self.codeWidget = QWidget(self.tab_2)
+        self.splitter.setHandleWidth(5)
+        self.codeWidget = QWidget(self.splitter)
         self.codeWidget.setObjectName(u"codeWidget")
-
-        self.horizontalLayout.addWidget(self.codeWidget)
-
-        self.tabWidget_2.addTab(self.tab_2, "")
-        self.tab_3 = QWidget()
-        self.tab_3.setObjectName(u"tab_3")
-        self.tabWidget_2.addTab(self.tab_3, "")
-        self.splitter.addWidget(self.tabWidget_2)
+        self.splitter.addWidget(self.codeWidget)
         self.terminalout = QWidget(self.splitter)
         self.terminalout.setObjectName(u"terminalout")
         self.splitter.addWidget(self.terminalout)
@@ -670,8 +656,6 @@ class Ui_SagittariusA(object):
         self.Runs_btn.setText(QCoreApplication.translate("SagittariusA", u"Runs", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.Database), QCoreApplication.translate("SagittariusA", u"Database", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.Calculator), QCoreApplication.translate("SagittariusA", u"Calculator", None))
-        self.tabWidget_2.setTabText(self.tabWidget_2.indexOf(self.tab_2), QCoreApplication.translate("SagittariusA", u"Tab 1", None))
-        self.tabWidget_2.setTabText(self.tabWidget_2.indexOf(self.tab_3), QCoreApplication.translate("SagittariusA", u"Tab 2", None))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.Editor), QCoreApplication.translate("SagittariusA", u"Editor", None))
     # retranslateUi
 

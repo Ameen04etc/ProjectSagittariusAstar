@@ -9,27 +9,36 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
                                QSplitter, QVBoxLayout, QHBoxLayout,
                                QGridLayout, QScrollBar, QSizePolicy,
                                QPushButton, QToolButton, QToolTip,
-                               QFrame, QLabel, QTreeView)
+                               QFrame, QLabel, QTreeView,
+                               QPlainTextEdit, QTextEdit, QFileDialog)
 from PySide6.QtCore import    (QProcess, Qt, QObject,
                                Signal, QRectF, QRect,
                                Slot, QPointF, QPoint,
-                               QSize, QEvent, QTimer,
-                               QSignalBlocker)
+                               QSize, QEvent, QSignalBlocker,
+                               QTimer, QRegularExpression)
 from PySide6.QtGui import     (QPainter, QColor, QPen,
                                QPixmap, QFont, QMouseEvent,
                                QImage, QCursor, QPainterPath,
                                QStandardItemModel, QStandardItem,
-                               QFontMetrics, QKeySequence)
+                               QFontMetrics, QKeySequence, QTextFormat,
+                               QTextCursor, QTextBlock, QShortcut,
+                               QTextCharFormat, QSyntaxHighlighter, QGuiApplication,
+                               QTextBlockUserData, QTextOption)
 from enum import Enum, auto
 from typing import cast
-import termCore
+from pathlib import Path
+from tree_sitter import Language, Parser
+import tree_sitter_python
+import json
 import os
-import numpy as np
+import sys
+import re
 import cv2
 import math
 import time
 import shiboken6
 import traceback
+import termCore
 
 """
 TerminalWidget
@@ -95,41 +104,396 @@ YELLOW = "\033[33m"
 BLUE   = "\033[34m"
 RESET  = "\033[0m"
 
-class MainTermWidget(QWidget):
+# class MainTermWidget(QWidget):
 
-    def __init__(self, parent = None):
-        super().__init__(parent)
-        self.TermWidget = TerminalWidget()
-        self.ScrollBar  = ScrollBar(self.TermWidget)
-        self.LayoutConfig()
-        self.TermWidget.ScrollCommand.connect(self.UpdateScrollbar)
-        self.ScrollBar.valueChanged.connect(self.ScrollCommand)
+#     def __init__(self, parent = None):
+#         super().__init__(parent)
+#         self.TermWidget = TerminalWidget2()
+#         self.ScrollBar  = ScrollBar(self.TermWidget)
+#         self.LayoutConfig()
+#         self.TermWidget.ScrollCommand.connect(self.UpdateScrollbar)
+#         self.ScrollBar.valueChanged.connect(self.ScrollCommand)
 
-    def LayoutConfig(self):
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        Layout = QHBoxLayout(self)
-        Layout.setContentsMargins(0, 0, 0, 0)
-        Layout.setSpacing(0)
+#     def LayoutConfig(self):
+#         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+#         Layout = QHBoxLayout(self)
+#         Layout.setContentsMargins(0, 0, 0, 0)
+#         Layout.setSpacing(0)
 
-        Layout.addWidget(self.TermWidget)
-        Layout.addWidget(self.ScrollBar)
+#         Layout.addWidget(self.TermWidget)
+#         Layout.addWidget(self.ScrollBar)
 
-    def UpdateScrollbar(self):
-        with QSignalBlocker(self.ScrollBar):
-            self.ScrollBar.setMinimum(0)
-            self.ScrollBar.setSingleStep(1)
-            self.ScrollBar.setPageStep(len(self.TermWidget.Buffer.lines))
-            self.ScrollBar.setValue(self.TermWidget.Buffer.TopRow)
-            self.ScrollBar.setMaximum(self.TermWidget.Buffer.TotalLines - self.ScrollBar.pageStep() + self.ScrollBar.minimum())
+#     def UpdateScrollbar(self):
+#         with QSignalBlocker(self.ScrollBar):
+#             self.ScrollBar.setMinimum(0)
+#             self.ScrollBar.setSingleStep(1)
+#             self.ScrollBar.setPageStep(len(self.TermWidget.Buffer.lines))
+#             self.ScrollBar.setValue(self.TermWidget.Buffer.TopRow)
+#             self.ScrollBar.setMaximum(self.TermWidget.Buffer.TotalLines - self.ScrollBar.pageStep() + self.ScrollBar.minimum())
             
-        self.ScrollBar.StyleConfig()
+#         self.ScrollBar.StyleConfig()
 
-    def ScrollCommand(self, value):
-        self.TermWidget.Buffer.TopRow = min(max(value, 0), len(self.TermWidget.Buffer.ScrollBack))
-        self.TermWidget.update()
+#     def ScrollCommand(self, value):
+#         self.TermWidget.Buffer.TopRow = min(max(value, 0), len(self.TermWidget.Buffer.ScrollBack))
+#         self.TermWidget.update()
 
 
-class TerminalWidget(QWidget):
+"""Drop-in QPlainTextEdit presentation layer for epsilonMajoris.py.
+
+Replace MainTermWidget, the placeholder TerminalWidget, and TerminalWidget2 in
+epsilonMajoris.py with this file's MainTermWidget and TerminalWidget classes.
+Keep TerminalSession, TerminalParser, TerminalBuffer, TerminalLine, and
+TerminalCell exactly where they are.  They remain the terminal model.
+"""
+
+from PySide6.QtCore import Qt, QTimer, Signal, QSize
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QGuiApplication, QTextCharFormat, QTextCursor, QTextOption
+from PySide6.QtWidgets import QHBoxLayout, QPlainTextEdit, QTextEdit, QWidget
+
+
+class MainTermWidget(QWidget):
+    """Container retained for compatibility with MainWindow."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.TermWidget = TerminalWidget(self)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.TermWidget)
+
+
+class TerminalWidget(QPlainTextEdit):
+    """A read-only document mirror of TerminalBuffer.
+
+    QTextDocument is deliberately not terminal state.  It can be recreated on
+    resize, while normal output changes only affected QTextBlocks.
+    """
+
+    ScrollCommand = Signal()
+    Send_Back = Signal()
+
+    BACKGROUND = QColor(24, 24, 24)
+    FOREGROUND = QColor(229, 229, 229)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setReadOnly(True)
+        self.setUndoRedoEnabled(False)
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.setWordWrapMode(QTextOption.WrapMode.NoWrap)
+        self.setCenterOnScroll(False)
+        self.setCursorWidth(0)             # Qt's insertion cursor is not our terminal cursor.
+        self.document().setDocumentMargin(0)
+        self.setStyleSheet(
+            "QPlainTextEdit { background: #181818; color: #e5e5e5; "
+            "border: 0; selection-background-color: #4d6f91; }"
+        )
+
+        self.Font = QFont()
+        self.Font.setPixelSize(15)
+        self.Font.setFamilies(["Consolas", "Courier New"])
+        self.Font.setStyleHint(QFont.StyleHint.Monospace)
+        self.Font.setFixedPitch(True)
+        self.setFont(self.Font)
+        metrics = QFontMetrics(self.Font)
+        self.CellWidth = metrics.horizontalAdvance("W")
+        self.CellHeight = metrics.height()
+
+        self.Buffer = TerminalBuffer()
+        self.Parser = TerminalParser(self.Buffer)
+        self.Session = TerminalSession(self.Parser)
+        self.Send_Back.connect(lambda: setattr(self.Buffer, "BackSpace", True))
+
+        self._document_rows = 0
+        self._document_cols = 0
+        self._queued_sync = False
+        self._rebuilding = False
+        self._cursor_visible = True
+        self._at_bottom_before_output = True
+        self._cursor_timer = QTimer(self)
+        self._cursor_timer.timeout.connect(self._toggle_cursor)
+        self._cursor_timer.start(500)
+
+        self.Session.OutputReceived.connect(self._queue_sync)
+        self.verticalScrollBar().valueChanged.connect(self._document_scrolled)
+        self.setMinimumSize(QSize(500, 50))
+        QTimer.singleShot(0, self._resize_terminal)
+
+    # ----- model -> document -------------------------------------------------
+
+    def _queue_sync(self):
+        """Coalesce a burst of PTY callbacks into one document transaction."""
+        if self._queued_sync:
+            return
+        self._queued_sync = True
+        QTimer.singleShot(0, self._sync_from_buffer)
+
+    def _all_lines(self):
+        return self.Buffer.ScrollBack + self.Buffer.lines
+
+    def _line_at_document_row(self, row):
+        if row < len(self.Buffer.ScrollBack):
+            return self.Buffer.ScrollBack[row]
+        return self.Buffer.lines[row - len(self.Buffer.ScrollBack)]
+
+    def _line_fragments(self, line):
+        """Return runs of identical terminal attributes, rather than per-cell writes."""
+        cells = line.cells
+        if not cells:
+            return [("", self._format_for_cell(None))]
+
+        fragments = []
+        start = 0
+        signature = self._cell_signature(cells[0])
+        for index in range(1, len(cells) + 1):
+            next_signature = self._cell_signature(cells[index]) if index < len(cells) else None
+            if next_signature != signature:
+                text = "".join(cell.char or " " for cell in cells[start:index])
+                fragments.append((text, self._format_for_cell(cells[start])))
+                start = index
+                signature = next_signature
+        return fragments
+
+    @staticmethod
+    def _cell_signature(cell):
+        return (cell.SelfColor.rgba(), cell.BackColor.rgba(), cell.Bold, cell.Faint,
+                cell.Italic, cell.UndLine, cell.DbUndLine, cell.StrikeThru,
+                cell.Reverse, cell.Conceal)
+
+    def _format_for_cell(self, cell):
+        fmt = QTextCharFormat()
+        if cell is None:
+            fmt.setForeground(self.FOREGROUND)
+            fmt.setBackground(self.BACKGROUND)
+            return fmt
+
+        foreground, background = QColor(cell.SelfColor), QColor(cell.BackColor)
+        if cell.Reverse:
+            foreground, background = background, foreground
+        if cell.Faint:
+            foreground.setAlpha(128)
+        if cell.Conceal:
+            foreground = QColor(background)
+
+        fmt.setForeground(foreground)
+        fmt.setBackground(background)
+        fmt.setFontWeight(QFont.Weight.Bold if cell.Bold else QFont.Weight.Normal)
+        fmt.setFontItalic(cell.Italic)
+        fmt.setFontStrikeOut(cell.StrikeThru)
+        if cell.DbUndLine:
+            fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.DoubleUnderline)
+        elif cell.UndLine:
+            fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.SingleUnderline)
+        return fmt
+
+    def _rebuild_document(self):
+        """Used only for initial setup and a grid-size/structural reset."""
+        self._rebuilding = True
+        try:
+            cursor = QTextCursor(self.document())
+            cursor.beginEditBlock()
+            cursor.select(QTextCursor.SelectionType.Document)
+            cursor.removeSelectedText()
+            for number, line in enumerate(self._all_lines()):
+                for text, fmt in self._line_fragments(line):
+                    cursor.insertText(text, fmt)
+                if number + 1 < len(self._all_lines()):
+                    cursor.insertBlock()
+            cursor.endEditBlock()
+            self._document_rows = len(self._all_lines())
+            self._document_cols = self.Buffer.MaxCols
+            self._clear_dirty_flags()
+        finally:
+            self._rebuilding = False
+
+    def _replace_document_line(self, document_row):
+        if not 0 <= document_row < self.document().blockCount():
+            return
+        block = self.document().findBlockByNumber(document_row)
+        cursor = QTextCursor(block)
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+        cursor.beginEditBlock()
+        cursor.removeSelectedText()
+        for text, fmt in self._line_fragments(self._line_at_document_row(document_row)):
+            cursor.insertText(text, fmt)
+        cursor.endEditBlock()
+
+    def _append_document_line(self, document_row):
+        cursor = QTextCursor(self.document())
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        if self._document_rows:
+            cursor.insertBlock()
+        for text, fmt in self._line_fragments(self._line_at_document_row(document_row)):
+            cursor.insertText(text, fmt)
+        self._document_rows += 1
+
+    def _sync_from_buffer(self):
+        self._queued_sync = False
+        row_count = len(self._all_lines())
+        # Buffer_Resize reflows scrollback and creates a new screen, so a full
+        # mirror is required. Normal terminal scrolling merely appends a block.
+        if (self.Buffer.DirtyScreen or self._document_cols != self.Buffer.MaxCols or
+                self._document_rows > row_count or self.document().blockCount() != self._document_rows):
+            self._rebuild_document()
+        else:
+            while self._document_rows < row_count:
+                self._append_document_line(self._document_rows)
+
+            dirty_rows = set(self.Buffer.DirtyLines)
+            dirty_rows.update(index for index, cells in enumerate(self.Buffer.DirtyCells) if cells)
+            # Active-buffer rows map after scrollback.  Rewriting a whole dirty
+            # block is fast and correctly handles style changes and erase CSI.
+            for screen_row in sorted(dirty_rows):
+                if 0 <= screen_row < len(self.Buffer.lines):
+                    self._replace_document_line(len(self.Buffer.ScrollBack) + screen_row)
+            self._clear_dirty_flags()
+
+        self._apply_terminal_cursor()
+        self._follow_buffer_view()
+        self.ScrollCommand.emit()
+
+    def _clear_dirty_flags(self):
+        self.Buffer.DirtyScreen = False
+        self.Buffer.DirtyLines.clear()
+        self.Buffer.DirtyCells = [[] for _ in range(self.Buffer.MaxRows)]
+
+    # ----- cursor, selection, and scrolling ---------------------------------
+
+    def _toggle_cursor(self):
+        self._cursor_visible = not self._cursor_visible
+        self._apply_terminal_cursor()
+
+    def _apply_terminal_cursor(self):
+        selections = []
+        row = len(self.Buffer.ScrollBack) + self.Buffer.Cursor.Row
+        column = self.Buffer.Cursor.Col
+        if column >= self.Buffer.MaxCols:
+            row += 1
+            column = 0
+        if self._cursor_visible and self.Parser.CursVis and 0 <= row < self.document().blockCount():
+            block = self.document().findBlockByNumber(row)
+            if block.isValid():
+                position = block.position() + min(column, max(0, len(block.text()) - 1))
+                cursor = QTextCursor(self.document())
+                cursor.setPosition(position)
+                cursor.setPosition(min(position + 1, block.position() + len(block.text())),
+                                   QTextCursor.MoveMode.KeepAnchor)
+                selection = QTextEdit.ExtraSelection()
+                selection.cursor = cursor
+                selection.format.setBackground(QColor(255, 255, 255, 110))
+                selections.append(selection)
+        self.setExtraSelections(selections)
+
+    def _follow_buffer_view(self):
+        # TopRow is already the terminal's model-level scroll position.
+        self._rebuilding = True
+        try:
+            self.verticalScrollBar().setValue(self.Buffer.TopRow)
+        finally:
+            self._rebuilding = False
+
+    def _document_scrolled(self, value):
+        if self._rebuilding:
+            return
+        self.Buffer.TopRow = min(max(value, 0), len(self.Buffer.ScrollBack))
+        self.Buffer.BottomRow = self.Buffer.TopRow + self.Buffer.MaxRows - 1
+        self.Buffer.ScrollActive = self.Buffer.TopRow != len(self.Buffer.ScrollBack)
+        self.ScrollCommand.emit()
+
+    def _copy_selection(self):
+        cursor = self.textCursor()
+        if cursor.hasSelection():
+            QGuiApplication.clipboard().setText(cursor.selectedText().replace("\u2029", "\n"))
+            return True
+        return False
+
+    # ----- terminal-controlled input -----------------------------------------
+
+    def keyPressEvent(self, event):
+        key, text = event.key(), event.text()
+        modifiers = event.modifiers()
+
+        if (key == Qt.Key.Key_C and
+                modifiers & Qt.KeyboardModifier.ControlModifier and
+                modifiers & Qt.KeyboardModifier.ShiftModifier):
+            self._copy_selection()
+        elif key == Qt.Key.Key_C and modifiers & Qt.KeyboardModifier.ControlModifier:
+            if self._copy_selection():
+                event.accept()
+                return
+            self.Session.Send("\x03")
+        elif key == Qt.Key.Key_V and modifiers & Qt.KeyboardModifier.ControlModifier:
+            self.Session.Send(QGuiApplication.clipboard().text())
+        elif key == Qt.Key.Key_Right:
+            self.Session.Send("\x1b[C")
+        elif key == Qt.Key.Key_Left:
+            self.Session.Send("\x1b[D")
+        elif key == Qt.Key.Key_Up:
+            self.Session.Send("\x1b[A")
+        elif key == Qt.Key.Key_Down:
+            self.Session.Send("\x1b[B")
+        elif key == Qt.Key.Key_Backspace:
+            if self.Buffer.Cursor.Col in (0, self.Buffer.MaxCols):
+                self.Send_Back.emit()
+            self.Session.Send("\x7f")
+        elif key == Qt.Key.Key_Delete:
+            self.Session.Send("\x1b[3~")
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.Session.Send("\r")
+        elif text and not modifiers & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier):
+            self.Session.Send(text)
+        else:
+            event.ignore()
+            return
+
+        # Any terminal key resumes at the live bottom; it never edits the document.
+        self.Buffer.ScrollActive = False
+        self.Buffer.TopRow = len(self.Buffer.ScrollBack)
+        self.Buffer.BottomRow = self.Buffer.TopRow + self.Buffer.MaxRows - 1
+        self._follow_buffer_view()
+        self.ScrollCommand.emit()
+        event.accept()
+
+    def mousePressEvent(self, event):
+        # Let Qt create a visual selection only.  It must never alter Buffer.Cursor.
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setFocus(Qt.FocusReason.MouseFocusReason)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        # Read-only QPlainTextEdit provides efficient standard drag selection/copy.
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event):
+        # Qt scrolls the document; _document_scrolled synchronizes Buffer.TopRow.
+        super().wheelEvent(event)
+        event.accept()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._resize_terminal)
+
+    def _resize_terminal(self):
+        rows = max(1, self.viewport().height() // max(1, self.CellHeight))
+        columns = max(1, self.viewport().width() // max(1, self.CellWidth))
+        if rows == self.Buffer.MaxRows and columns == self.Buffer.MaxCols:
+            return
+        self.Buffer.MaxRows = rows
+        self.Buffer.MaxCols = columns
+        self.Buffer.Buffer_Resize()
+        self.Buffer.TopRow = min(self.Buffer.TopRow, len(self.Buffer.ScrollBack))
+        self.Buffer.BottomRow = self.Buffer.TopRow + rows - 1
+        self.Buffer.DirtyScreen = True
+        self.Session.Resize(columns, rows)
+        self._sync_from_buffer()
+
+
+class TerminalWidget2(QWidget):
     ScrollCommand = Signal()
     Send_Back     = Signal()
 
@@ -427,12 +791,12 @@ class TerminalWidget(QWidget):
 
 class TerminalRenderer(QObject):
 
-    def __init__(self, parent : 'TerminalWidget'):
+    def __init__(self, parent : 'TerminalWidget2'):
         super().__init__(parent)
         self.font_cache = {}
 
-    def parent(self) -> 'TerminalWidget':
-        return cast('TerminalWidget', super().parent())
+    def parent(self) -> 'TerminalWidget2':
+        return cast('TerminalWidget2', super().parent())
 
     def RenderCells(self, Images : list[QImage]):
         base_font     = self.parent().Font
@@ -745,7 +1109,7 @@ class TerminalSession(QObject):
             self.Session.resize(cols, rows)
 
     def Read(self, data : bytes):
-        print("PTY OUTPUT:", repr(data))
+        # print("PTY OUTPUT:", repr(data))
         decoded_text = data.decode('utf-8', errors='ignore')
         # print(decoded_text, end='', flush=True)
         self.Parser.feed(data.decode())
@@ -932,12 +1296,12 @@ class TerminalParser:
             # Default
             if not self.csi_params or self.csi_params == [""]:
                 self.SGR_Dict[0]()
-            
+
             # Standard 1-code SGR
             elif len(self.csi_params) == 1:
                 code = getParam(0, 0)
                 self.SGR_Dict.get(code, lambda: None)()
-                
+
             # 256-Color Mode
             elif len(self.csi_params) == 3 and self.csi_params[1] == "5":
                 idx = getParam(2, 0)
@@ -945,7 +1309,7 @@ class TerminalParser:
                     self.Color = QColor(*self.Palette[idx])
                 elif self.csi_params[0] == "48":
                     self.BackGround = QColor(*self.Palette[idx])
-                    
+
             # True Color RGB Mode
             elif len(self.csi_params) == 5 and self.csi_params[1] == "2":
                 r, g, b = getParam(2), getParam(3), getParam(4)

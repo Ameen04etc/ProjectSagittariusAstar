@@ -16,7 +16,7 @@ import os
 import numpy as np
 from supernovaEngine import *
 from epsilonMajoris import *
-from anNaylam import *
+from editTabs import *
 
 
 class MainWindow(QMainWindow):
@@ -36,11 +36,11 @@ class MainWindow(QMainWindow):
         terminal_layout.setContentsMargins(0, 0, 0, 0)
         terminal_layout.addWidget(self.Terminal)
 
-        codeEdit = MasterWidget(parent = self.ui.codeWidget)
+        tabs = editTabs(parent = self.ui.codeWidget)
         layout = QVBoxLayout(self.ui.codeWidget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(codeEdit)
+        layout.addWidget(tabs)
 
 
         self.x        = np.linspace(0,10,200000)
@@ -167,34 +167,6 @@ class MainWindow(QMainWindow):
     def open_runs_folder(self):
         self.ui.Executables_btn.setChecked(False)
         self.ui.stackedWidget.setCurrentIndex(1)
-
-    # def setup_terminal(self):
-    #     # Create PowerShell process
-    #     self.process = QProcess(self)
-    #     # Receive output
-    #     self.process.readyReadStandardOutput.connect(self.handle_stdout)
-    #     self.process.readyReadStandardError.connect(self.handle_stderr)
-    #     # Execute command when Enter is pressed
-    #     self.ui.commandline.returnPressed.connect(self.send_command)
-    #     # Start PowerShell
-    #     self.process.start("powershell.exe")
-
-    # def handle_stdout(self):
-    #     data = self.process.readAllStandardOutput()
-    #     text = bytes(data).decode(errors="ignore")
-    #     self.ui.terminalout.appendPlainText(text)
-
-    # def handle_stderr(self):
-    #     data = self.process.readAllStandardError()
-    #     text = bytes(data).decode(errors="ignore")
-    #     self.ui.terminalout.appendPlainText(text)
-
-    # def send_command(self):
-    #         command = self.ui.commandline.text()
-    #         self.process.write(
-    #             (command + "\n").encode()
-    #         )
-    #         self.ui.commandline.clear()
 
     def tanh_square_wave(self, t, T, steepness=50.0, low=-1.0, high=1.0):
         """

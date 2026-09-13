@@ -276,7 +276,7 @@ class LineNumberArea(QWidget):
 
 
 class CodeEditor(QPlainTextEdit):
-    fileOpened = Signal()
+    fileOpened = Signal(object)
 
     def __init__(self, parent = None):
         super().__init__(parent)
@@ -434,6 +434,10 @@ class CodeEditor(QPlainTextEdit):
             self.setTextCursor(cursor)
 
     def HighLightLine(self):
+        if self.textCursor().hasSelection():
+            self.setExtraSelections(self.errSelections)
+            return
+        
         line_color = QColor(255, 255, 255, 15)
 
         selection = QTextEdit.ExtraSelection()
@@ -666,13 +670,13 @@ class CodeEditor(QPlainTextEdit):
         #       self.Selection.FirstBlock.blockNumber(), "\n",
         #       self.Selection.LastBlock.blockNumber())
 
-    def openFile(self):
-        filepath, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open File",
-            "",
-            "All Files (*);;Python Files (*.py)"
-        )
+    def openFile(self, filepath = None):
+        # filepath, _ = QFileDialog.getOpenFileName(
+        #     self,
+        #     "Open File",
+        #     "",
+        #     "All Files (*);;Python Files (*.py)"
+        # )
 
         if filepath:
             self.NewFile = True
@@ -680,6 +684,8 @@ class CodeEditor(QPlainTextEdit):
             _, self.FileExt = os.path.splitext(filepath)    # Splits "C:/scripts/main.py" into ("C:/scripts/main", ".py")
             with open(filepath, "r", encoding = "utf-8") as file:
                 text = file.read()
+
+            fileName = Path(filepath).name
 
             self.LoadFile = True
             self.setPlainText(text)
@@ -690,6 +696,7 @@ class CodeEditor(QPlainTextEdit):
                 incremental = False
                 )
             self.OldText = self.toPlainText()
+            # self.fileOpened.emit(fileName)
 
             QTimer.singleShot(50, lambda: self.codeHighlight(refresh = True))
 
@@ -1305,12 +1312,13 @@ class CodeEditor(QPlainTextEdit):
             self.setTextCursor(cursor)
 
     def SignalManager(self):
-        self.fileOpenShortcut = QShortcut(QKeySequence("Ctrl+O"), self)
+        # self.fileOpenShortcut = QShortcut(QKeySequence("Ctrl + O"), self)
 
-        self.fileOpenShortcut.activated      .connect(self.openFile)
+        # self.fileOpenShortcut.activated      .connect(self.openFile)
         self.blockCountChanged               .connect(self.updateLineData)
         self.cursorPositionChanged           .connect(self.updateLineData)
         self.cursorPositionChanged           .connect(self.HighLightLine)
+        self.selectionChanged                .connect(self.HighLightLine)
         self.updateRequest                   .connect(self.LineWidget.update)
         self.selectionChanged                .connect(self.updateSelection)
         self.textChanged                     .connect(self.reportChange)
