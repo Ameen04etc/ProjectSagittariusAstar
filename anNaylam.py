@@ -88,7 +88,6 @@ CLOSING_CHARS = set(PAIR_BRACE.values())
 
 AUTO_CLOSE_BEFORE = {' ', '\t', '\n', '\r', ')', ']', '}', '>', ',', ';', ':', '.', '"', "'", '`', ''}
 
-
 DELIMITER = {
     "subscript"               : ("[", "]"),
     "list"                    : ("[", "]"),
@@ -115,6 +114,9 @@ RAINBOW_COLORS = [
     QColor("#179fff"),
 ]
 
+INDENT = {"if_statement", "else_clause", "elif_clause", "for_statement", "function_definition", "class_definition"}
+
+DEDENT = {"return_statement"}
 
 def ListIdx(listObject : list, target):
     try:
@@ -684,8 +686,6 @@ class CodeEditor(QPlainTextEdit):
             _, self.FileExt = os.path.splitext(filepath)    # Splits "C:/scripts/main.py" into ("C:/scripts/main", ".py")
             with open(filepath, "r", encoding = "utf-8") as file:
                 text = file.read()
-
-            fileName = Path(filepath).name
 
             self.LoadFile = True
             self.setPlainText(text)
@@ -1388,15 +1388,35 @@ class CodeEditor(QPlainTextEdit):
         #                 self.bracketMap.insert((cursorAt + 1), {})
 
         if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            cursor      = self.textCursor()
-            nextIndent  = self.Language.nextIndentation(cursor)
-            
+            print("Delimiter Context =", self.Context.delimiter.stack)
+            print("Node Type =", self.fetchCursorNode().type)
+
             text        = self.textCursor().block().text()
             match       = re.match(r"^[ \t]*", text)
             indentation = match.group(0) if match else ""
 
-            self.textCursor().insertText("\n" + indentation)
-            if nextIndent == LineIndent.Indent: self.Indent(cursor.block())
+            self.Context.fetchCursorContext()
+            node = self.fetchCursorNode()
+            if node.type == "module":
+                preText = text[:cursor.positionInBlock()]
+                stripped = preText.rstrip(" \t")
+                strippedPosition = len(stripped)
+                node = self.fetchCursorNode(position = cursor.block().position() + strippedPosition)
+                if node.type in INDENT:
+                    nextIndent = LineIndent.Indent
+                elif node.type in DEDENT:
+                    nextIndent = LineIndent.Dedent
+            elif node.type in INDENT:
+                nextIndent = LineIndent.Indent
+            elif node.type in DEDENT:
+                nextIndent = LineIndent.Dedent
+            else:
+                nextIndent = LineIndent.Keep
+
+            cursor.insertText("\n" + indentation)
+
+            if   nextIndent == LineIndent.Indent: self.Indent(cursor.block())
+            elif nextIndent == LineIndent.Dedent: self.unIndent(cursor.block())
 
             return
 
@@ -1966,8 +1986,6 @@ class LSPDocument:
         self.languageId = languageId
         self.text       = text
         self.version    = 1
-
-
 
 
 class MasterWidget(QWidget):

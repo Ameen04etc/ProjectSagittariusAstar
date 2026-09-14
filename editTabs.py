@@ -45,7 +45,7 @@ class editTabs(QTabWidget):
         index = self.addTab(tab, name)
 
         self.setCurrentIndex(index)
-        self.setCurrentWidget(tab)
+        # self.setCurrentWidget(tab)
 
     def openFile(self):
         filepath, _ = QFileDialog.getOpenFileName(
@@ -56,6 +56,13 @@ class editTabs(QTabWidget):
         )
 
         if filepath:
+            for index in range(self.count()):
+                tab = self.widget(index)
+                editorWidget = tab.findChild(MasterWidget)
+                if Path(filepath).as_uri() == editorWidget.editor.FilePath:
+                    self.setCurrentWidget(tab)
+                    # self.setCurrentIndex(index)
+                    return
             fileName = Path(filepath).name
             self.newTab(name = fileName)
             editorWidget = self.currentWidget().findChild(MasterWidget)
@@ -79,4 +86,6 @@ class editTabs(QTabWidget):
         self.fileOpenAction = QAction("Open File", self)
         self.fileOpenAction.setShortcut(QKeySequence("Ctrl + O"))
         self.addAction(self.fileOpenAction)
+
+
 
