@@ -68,6 +68,70 @@ VS_OPERATORS = {
     "<", ">", "<=", ">=", "@", "&", "|", "^", "~", "<<" , ">>"
 }
 
+DUNDER_METHODS = {
+    # Construction & Destruction
+    "__new__", "__init__", "__del__",
+
+    # Representation & Conversion
+    "__repr__", "__str__", "__bytes__", "__format__",
+    "__hash__", "__bool__",
+
+    # Comparisons
+    "__lt__", "__le__", "__eq__", "__ne__", "__gt__", "__ge__",
+
+    # Attribute Access
+    "__getattr__", "__getattribute__", "__setattr__", "__delattr__",
+    "__dir__",
+
+    # Descriptors
+    "__get__", "__set__", "__delete__", "__set_name__",
+
+    # Class Customization & Metaclasses
+    "__init_subclass__", "__class_getitem__", "__prepare__",
+    "__instancecheck__", "__subclasscheck__",
+
+    # Callables
+    "__call__",
+
+    # Containers & Sequences
+    "__len__", "__length_hint__", "__getitem__", "__setitem__",
+    "__delitem__", "__missing__", "__iter__", "__reversed__",
+    "__contains__",
+
+    # Context Managers
+    "__enter__", "__exit__",
+
+    # Asynchronous Features
+    "__await__", "__aiter__", "__anext__",
+    "__aenter__", "__aexit__",
+
+    # Numeric & Arithmetic
+    "__add__", "__sub__", "__mul__", "__matmul__",
+    "__truediv__", "__floordiv__", "__mod__", "__divmod__",
+    "__pow__", "__lshift__", "__rshift__", "__and__",
+    "__xor__", "__or__",
+
+    # Reflected Arithmetic
+    "__radd__", "__rsub__", "__rmul__", "__rmatmul__",
+    "__rtruediv__", "__rfloordiv__", "__rmod__", "__rdivmod__",
+    "__rpow__", "__rlshift__", "__rrshift__", "__rand__",
+    "__rxor__", "__ror__",
+
+    # In-place Arithmetic
+    "__iadd__", "__isub__", "__imul__", "__imatmul__",
+    "__itruediv__", "__ifloordiv__", "__imod__", "__ipow__",
+    "__ilshift__", "__irshift__", "__iand__", "__ixor__", "__ior__",
+
+    # Unary & Built-in Math
+    "__neg__", "__pos__", "__abs__", "__invert__",
+    "__complex__", "__int__", "__float__", "__index__",
+    "__round__", "__trunc__", "__floor__", "__ceil__",
+
+    # Serialization / Pickling
+    "__reduce__", "__reduce_ex__", "__getstate__", "__setstate__",
+    "__getnewargs__", "__getnewargs_ex__",
+}
+
 PAIR_BRACE = {
     '(' : ')',
     '{' : '}',
@@ -114,9 +178,9 @@ RAINBOW_COLORS = [
     QColor("#179fff"),
 ]
 
-INDENT = {"if_statement", "else_clause", "elif_clause", "for_statement", "function_definition", "class_definition"}
+INDENT = {"if_statement", "else_clause", "elif_clause", "for_statement", "while_statement", "function_definition", "class_definition"}
 
-DEDENT = {"return_statement"}
+DEDENT = {"return_statement", "break_statement"}
 
 def ListIdx(listObject : list, target):
     try:
@@ -346,6 +410,10 @@ class CodeEditor(QPlainTextEdit):
         # self.blockBracketStack = [[]]
         # self.bracketMap = [{}]
 
+        self._blink_reset_timer = QTimer(self)
+        self._blink_reset_timer.setSingleShot(True)
+        self._blink_reset_timer.timeout.connect(self._restore_blinking)
+
         blockdata = BlockBracketData()
         self.firstVisibleBlock().setUserData(blockdata)
 
@@ -360,6 +428,101 @@ class CodeEditor(QPlainTextEdit):
         painter.setPen(QPen(QColor(229, 229, 16), 1.5))
         for squiggle in self.warnSquiggles: self.drawSquiggle(painter, squiggle)
 
+        base_x = self.document().documentMargin() + self.contentOffset().x()
+        active_pos = None
+        min_block_num = -1
+        max_block_num = -1
+        
+        cursor_block = self.textCursor().block()
+        c_text = cursor_block.text()
+        
+        # If cursor is on an empty line, look upwards to inherit its scope context
+        temp_block = cursor_block
+        while not c_text.strip() and temp_block.isValid():
+            temp_block = temp_block.previous()
+            if temp_block.isValid():
+                c_text = temp_block.text()
+
+        c_ls = len(c_text) - len(c_text.lstrip(' '))
+        c_levels = list(range(0, c_ls, 4))
+        
+        if c_levels:
+            active_pos = c_levels[-1] # The deepest valid guide for the current block
+            
+            # Scan upwards to find where this indentation scope starts
+            b = temp_block
+            start_block = b
+            while b.isValid():
+                t = b.text()
+                if t.strip():
+                    if (len(t) - len(t.lstrip(' '))) <= active_pos:
+                        break
+                start_block = b
+                b = b.previous()
+                
+            # Scan downwards to find where this indentation scope ends
+            b = temp_block
+            end_block = b
+            while b.isValid():
+                t = b.text()
+                if t.strip():
+                    if (len(t) - len(t.lstrip(' '))) <= active_pos:
+                        break
+                end_block = b
+                b = b.next()
+                
+            min_block_num = start_block.blockNumber()
+            max_block_num = end_block.blockNumber()
+
+        # --- STEP 2: DRAW THE GUIDES ---
+        viewport_rect = self.viewport().rect()
+        block = self.firstVisibleBlock()
+        content_offset = self.contentOffset()
+
+        while block.isValid():
+            geom = self.blockBoundingGeometry(block).translated(content_offset)
+            top = geom.top()
+            bottom = geom.bottom()
+
+            if top > viewport_rect.bottom():
+                break
+
+            if bottom >= 0 and block.isVisible():
+                text = block.text()
+                
+                # VS Code trick: Bridge empty lines so the vertical lines don't break
+                if not text.strip():
+                    # Find indent of previous valid line
+                    pb = block.previous()
+                    while pb.isValid() and not pb.text().strip(): pb = pb.previous()
+                    p_ls = len(pb.text()) - len(pb.text().lstrip(' ')) if pb.isValid() else 0
+                    
+                    # Find indent of next valid line
+                    nb = block.next()
+                    while nb.isValid() and not nb.text().strip(): nb = nb.next()
+                    n_ls = len(nb.text()) - len(nb.text().lstrip(' ')) if nb.isValid() else 0
+                    
+                    leading_spaces = min(p_ls, n_ls)
+                else:
+                    leading_spaces = len(text) - len(text.lstrip(' '))
+
+                levels = list(range(0, leading_spaces, 4))
+
+                for pos in levels:
+                    x = int(base_x + (pos * self.cellWidth))
+                    
+                    # If this vertical line is the active scope AND this block falls within the contiguous scope boundaries
+                    is_active_scope_line = (pos == active_pos) and (min_block_num <= block.blockNumber() <= max_block_num)
+
+                    if is_active_scope_line:
+                        painter.setPen(QColor(255, 255, 255, 255))  # Bright white for active scope
+                    else:
+                        painter.setPen(QColor(255, 255, 255, 50))   # Dim white for background scopes
+
+                    painter.drawLine(x, int(top), x, int(bottom))
+
+            block = block.next()
+        
         super().paintEvent(e)
 
     def drawSquiggle(self, painter : QPainter, squiggle : Squiggle):
@@ -616,26 +779,24 @@ class CodeEditor(QPlainTextEdit):
         cursor.endEditBlock()
         return False
 
-    def removeBracket(self, text):
+    def removeBracket(self, ch, pos):
         success = False
-        block = self.textCursor().block()
-        position = self.textCursor().position() - block.position()
-        blocktext = block.text()
-
-        _, _, _, byteOffset = self.QOffsetToCoords(text = self.toPlainText(), offset = self.textCursor().position())
-        isInside = self.FreshDelimiters.checkInside(byteOffset = byteOffset)
         freshFlag = False
 
-        if isInside:
-            for delim in self.FreshDelimiters:
-                if delim.start < byteOffset < delim.end:
-                    if abs(delim.end - delim.start - 2) == 0:
-                        freshFlag = True
-                        break
+        if self.document().characterAt(pos) == PAIR_BRACE[ch]:
+            _, _, _, byteOffset = self.QOffsetToCoords(text = self.toPlainText(), offset = pos)
+            isInside = self.FreshDelimiters.checkInside(byteOffset = byteOffset)
+
+            if isInside:
+                for delim in self.FreshDelimiters:
+                    if delim.start < byteOffset < delim.end:
+                        if abs(delim.end - delim.start - 2) == 0:
+                            freshFlag = True
+                            break
 
         self.textCursor().deletePreviousChar()
 
-        if text in PAIR_BRACE and blocktext[position] == PAIR_BRACE[text] and freshFlag:
+        if freshFlag:
             self.textCursor().deleteChar()
             success = True
 
@@ -823,9 +984,9 @@ class CodeEditor(QPlainTextEdit):
 
         affectedBlocks =  sorted(affectedBlocks)
 
-        self.codeHighlight(blocks = affectedBlocks)
+        QTimer.singleShot(300, lambda: self.codeHighlight(blocks = affectedBlocks))
 
-        print("------------------------")
+        # print("------------------------")
 
         self.OldText = newText
 
@@ -913,13 +1074,6 @@ class CodeEditor(QPlainTextEdit):
                                     refBlock.userData().bracketMap.update({
                                         col : [bracket, color]
                                     })
-
-                                    print(
-                                        "BRACKET MAP CHANGED:",
-                                        refBlock.blockNumber(),
-                                        col,
-                                        color.name()
-                                    )
                                 else:
                                     blockDataCurr.bracketMap.update({
                                         col : [bracket, color]
@@ -973,7 +1127,8 @@ class CodeEditor(QPlainTextEdit):
                         if not preStack:
                             preStack.append([ch, blockNo, i])
                         elif preStack[-1][0] != ch:
-                            preStack.append([ch, blockNo, i])
+                            if preStack[-1][0] not in {"'", '"'}:
+                                preStack.append([ch, blockNo, i])
                         else:
                             preStack.pop(-1)
 
@@ -1011,12 +1166,6 @@ class CodeEditor(QPlainTextEdit):
                                     refBlock.userData().bracketMap.update({
                                         col : [bracket, color]
                                     })
-                                    print(
-                                        "BRACKET MAP CHANGED:",
-                                        refBlock.blockNumber(),
-                                        col,
-                                        color.name()
-                                    )
                                 else:
                                     blockData.bracketMap.update({
                                         col : [bracket, color]
@@ -1279,6 +1428,7 @@ class CodeEditor(QPlainTextEdit):
 
                 if block.isValid():
                     self.Language.Highlighter.rehighlightBlock(block)
+                    # pass
 
             nextIdx = idx + chunkLen
 
@@ -1318,6 +1468,7 @@ class CodeEditor(QPlainTextEdit):
         self.blockCountChanged               .connect(self.updateLineData)
         self.cursorPositionChanged           .connect(self.updateLineData)
         self.cursorPositionChanged           .connect(self.HighLightLine)
+        self.cursorPositionChanged           .connect(lambda: self.viewport().update())
         self.selectionChanged                .connect(self.HighLightLine)
         self.updateRequest                   .connect(self.LineWidget.update)
         self.selectionChanged                .connect(self.updateSelection)
@@ -1341,9 +1492,11 @@ class CodeEditor(QPlainTextEdit):
         )
 
     def keyPressEvent(self, e):
-        cursor        = self.textCursor()
-        cursorAt      = self.textCursor().block().blockNumber()
+        cursor = self.textCursor()
         ch = e.text()
+
+        app = QApplication.instance()
+        app.setCursorFlashTime(0)
 
         # if ch not in {'', '\t'}:
         #     if cursor.hasSelection():
@@ -1406,6 +1559,8 @@ class CodeEditor(QPlainTextEdit):
                     nextIndent = LineIndent.Indent
                 elif node.type in DEDENT:
                     nextIndent = LineIndent.Dedent
+                else:
+                    nextIndent = LineIndent.Keep
             elif node.type in INDENT:
                 nextIndent = LineIndent.Indent
             elif node.type in DEDENT:
@@ -1418,32 +1573,38 @@ class CodeEditor(QPlainTextEdit):
             if   nextIndent == LineIndent.Indent: self.Indent(cursor.block())
             elif nextIndent == LineIndent.Dedent: self.unIndent(cursor.block())
 
+            self._blink_reset_timer.start(50)
             return
 
         if e.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Right, Qt.Key.Key_Left):
             super().keyPressEvent(e)
             self.Context.fetchCursorContext()
+            self._blink_reset_timer.start(50)
             return
 
         elif e.text() in PAIR_BRACE or e.text() in CLOSING_CHARS:
             if self.bracketInput(e.text()):
+                self._blink_reset_timer.start(50)
                 return
 
         elif e.key() == Qt.Key_Tab:
             if self.Selection.Select:
                 self.BlockIndent()
+                self._blink_reset_timer.start(50)
                 return
 
             else:
                 self.Indent(self.textCursor().block(), InPlace = True)
+                self._blink_reset_timer.start(50)
                 return
 
         elif e.key() == Qt.Key_Backspace:
-            block = self.textCursor().block()
-            position = self.textCursor().position() - block.position()
-            text = self.textCursor().block().text()
-            if len(text) > position > 0 and text[position - 1] in PAIR_BRACE:
-                self.removeBracket(text[position - 1])
+            cursor = self.textCursor()
+            pos = cursor.position()
+            ch = self.document().characterAt(pos - 1)
+            if pos > 0 and ch in PAIR_BRACE:
+                self.removeBracket(ch, pos)
+                self._blink_reset_timer.start(50)
                 return
 
             if not self.Selection.Select:
@@ -1453,31 +1614,42 @@ class CodeEditor(QPlainTextEdit):
                 uniqChars = set(preText)
                 if not (uniqChars - {" ", "\t"}) and uniqChars:
                     self.unIndent(cursor.block(), InPlace = True)
+                    self._blink_reset_timer.start(50)
                     return
 
         elif e.key() == Qt.Key_Backtab:
             if self.Selection.Select:
                 self.BlockUnIndent()
+                self._blink_reset_timer.start(50)
                 return
             else:
                 codeBlock = self.textCursor().block()
                 self.unIndent(codeBlock)
+                self._blink_reset_timer.start(50)
                 return
 
         super().keyPressEvent(e)
+        self._blink_reset_timer.start(50)
 
     def mousePressEvent(self, e):
+        app = QApplication.instance()
+        app.setCursorFlashTime(0)
         super().mousePressEvent(e)
-        self.Context.fetchCursorContext()
+        self._blink_reset_timer.start(50)
+        # self.Context.fetchCursorContext()
         # for stackInput in self.blockBracketStack:
         #     print(stackInput)
-        print("------")
+        # print("------")
         if e.button() == Qt.RightButton:
             self.Language.syntax.printSyntax()
         node = self.fetchCursorNode(position = self.textCursor().position())
-        print(node.type)
+        # self.Language.syntax.printSyntax(node = node)
         # print(self.document().characterCount())
 
+    def _restore_blinking(self):
+            # Restore default system blink time (usually ~1000ms in Qt)
+            app = QApplication.instance()
+            app.setCursorFlashTime(1000)
 
 class CodeSelection:
     def __init__(self):
@@ -1495,6 +1667,11 @@ class delimiterContext:
     def __init__(self):
         self.level = 0
         self.stack = []
+
+
+class scopeContext:
+    def __init__(self):
+        pass
 
 
 class CodeContext:
@@ -1690,10 +1867,12 @@ class syntaxHighlighter(QSyntaxHighlighter):
 
         line_bytes = text.encode("utf-8")
 
-        stack = [self.syntax.Tree.root_node]
+        alpha = 255
+
+        stack = [(self.syntax.Tree.root_node, False)]
 
         while stack:
-            currentNode = stack.pop()
+            currentNode, parent_dimmed = stack.pop()
 
             start_row = currentNode.start_point[0]
             end_row = currentNode.end_point[0]
@@ -1701,37 +1880,50 @@ class syntaxHighlighter(QSyntaxHighlighter):
             if end_row < blockNumber or start_row > blockNumber:
                 continue
 
-            stack.extend(reversed(currentNode.children))
+            is_dimmed = parent_dimmed
+            if not is_dimmed and currentNode.parent:
+                for sibling in currentNode.parent.children:
+                    if sibling.type in DEDENT:
+                        if currentNode.start_byte > sibling.end_byte:
+                            is_dimmed = True
+                            break
 
-            applied = False
+            for child in reversed(currentNode.children):
+                stack.append((child, is_dimmed))
+
+            if currentNode.child_count > 0 and currentNode.type not in {"string", "string_start", "string_content", "string_end"}:
+                continue
+
+            opacity = "80" if is_dimmed else "FF"
+            alpha   = 128 if is_dimmed else 255
+
             format = QTextCharFormat()
             format.setFontItalic(False)
-
-            # print("inside HIGHLIGHTER ", currentNode.type, currentNode.text)
+            applied = False
 
             if currentNode.type in VS_CONTROL_FLOW:
-                format.setForeground(QColor("#C586C0"))
+                format.setForeground(QColor(f"#{opacity}C586C0"))
                 applied = True
             elif currentNode.type in VS_KEYWORDS:
-                format.setForeground(QColor("#2679BD"))
+                format.setForeground(QColor(f"#{opacity}2679BD"))
                 applied = True
             elif currentNode.type in {"import", "from", "as"}:
-                format.setForeground(QColor("#c586c0"))
+                format.setForeground(QColor(f"#{opacity}c586c0"))
                 applied = True
             elif currentNode.type in {"def", "class", "lambda"}:
-                format.setForeground(QColor("#fe7b72"))
+                format.setForeground(QColor(f"#{opacity}fe7b72"))
                 applied = True
             elif currentNode.type in {"integer", "float", "complex"}:
-                format.setForeground(QColor("#B5CEA8"))
+                format.setForeground(QColor(f"#{opacity}B5CEA8"))
                 applied = True
             elif currentNode.type == "escape_sequence":
-                format.setForeground(QColor("#d7ba7d"))
+                format.setForeground(QColor(f"#{opacity}d7ba7d"))
                 applied = True
             elif currentNode.type in {"string", "string_start", "string_content", "string_end"}:
-                format.setForeground(QColor("#a5d6ff"))
+                format.setForeground(QColor(f"#{opacity}a5d6ff"))
                 applied = True
             elif currentNode.type == "comment":
-                format.setForeground(QColor("#8b949e")) 
+                format.setForeground(QColor(f"#{opacity}8b949e")) 
                 format.setFontItalic(True)
                 applied = True
 
@@ -1739,27 +1931,53 @@ class syntaxHighlighter(QSyntaxHighlighter):
                 parent = currentNode.parent
                 applied = True
                 if parent is not None:
+                    node_text = currentNode.text.decode('utf-8') if isinstance(currentNode.text, bytes) else currentNode.text
                     if parent.type == "call" and parent.child_by_field_name("function") == currentNode:
-                        format.setForeground(QColor("#d2a8f7"))
-                    elif parent.type == "function_definition" and parent.child_by_field_name("name") == currentNode:
-                        format.setForeground(QColor("#d2a8f7"))
+                        color = QColor("#d2a8f7")
+                        format.setForeground(QColor(f"#{opacity}d2a8f7"))
+                    elif parent.type == "function_definition":
+                        if parent.child_by_field_name("name") == currentNode:
+                            if node_text in DUNDER_METHODS:
+                                color = QColor("#dadaa9")
+                                format.setForeground(QColor(f"#{opacity}dadaa9"))
+                            else:
+                                color = QColor("#d2a8f7")
+                                format.setForeground(QColor(f"#{opacity}d2a8f7"))
+                    elif parent.type in {"parameters", "typed_parameter", "default_parameter", "typed_default_parameter"}:
+                        if node_text != 'self':
+                            color = QColor("#fda556")
+                            format.setForeground(QColor(f"#{opacity}fda556"))
+                    elif parent.type == "type":
+                        color = QColor("#4dc1a0")
+                        format.setForeground(QColor(f"#{opacity}4dc1a0"))
                     elif parent.type == "class_definition" and parent.child_by_field_name("name") == currentNode:
-                        format.setForeground(QColor("#4dc1a0"))
+                        color = QColor("#4dc1a0")
+                        format.setForeground(QColor(f"#{opacity}4dc1a0"))
                     elif parent.type == "decorator":
-                        format.setForeground(QColor("#4bc9b0"))
+                        color = QColor("#4bc9b0")
+                        format.setForeground(QColor(f"#{opacity}4bc9b0"))
                     elif  parent.type == "dotted_name":
-                        format.setForeground(QColor("#4bc9b0"))
+                        color = QColor("#4bc9b0")
+                        format.setForeground(QColor(f"#{opacity}4bc9b0"))
                     elif parent.type == "argument_list":
-                        format.setForeground(QColor("#4dc1a0"))
+                        color = QColor("#4dc1a0")
+                        format.setForeground(QColor(f"#{opacity}4dc1a0"))
                     else:
-                        format.setForeground(QColor("#FFFFFF"))
+                        format.setForeground(QColor(f"#{opacity}FFFFFF"))
                 else:
-                    format.setForeground(QColor("#9CDCFE"))
+                    color = QColor("#9CDCFE")
+                    format.setForeground(QColor(f"#{opacity}9CDCFE"))
+
             elif currentNode.type in VS_OPERATORS:
-                format.setForeground(QColor("#FFFFFF"))
+                format.setForeground(QColor(f"#{opacity}FFFFFF"))
                 applied = True
-            elif currentNode.type not in {"(", "{", "[", ")", "}", "]"}:
-                format.setForeground(QColor("#FFFFFF"))
+
+            elif currentNode.type in {"(", "{", "[", ")", "}", "]"}:
+                format.setForeground(QColor(f"#{opacity}FF0000"))
+                applied = True
+
+            else:
+                format.setForeground(QColor(f"#{opacity}FFFFFF"))
                 applied = True
 
             if applied:
@@ -1779,7 +1997,9 @@ class syntaxHighlighter(QSyntaxHighlighter):
         dFormat = QTextCharFormat()
         if self.currentBlock().userData():
             for position, data in self.currentBlock().userData().bracketMap.items():
-                dFormat.setForeground(data[1])
+                color = data[1]
+                color.setAlpha(alpha)
+                dFormat.setForeground(color)
                 self.setFormat(position, 1, dFormat)
 
 
@@ -2029,4 +2249,3 @@ class MasterWidget(QWidget):
 # window.move(avail.x() + (avail.width() // 2), avail.y())
 
 # sys.exit(app.exec())
-

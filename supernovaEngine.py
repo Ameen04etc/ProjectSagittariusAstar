@@ -4112,4 +4112,3 @@ class PaneController(QObject):
 
 class PaneCursor(QWidget):
     pass
-
