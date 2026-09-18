@@ -18,7 +18,7 @@ from PySide6.QtGui import     (QPainter, QColor, QPen,
                                QFontMetrics, QKeySequence, QTextFormat,
                                QTextCursor, QTextBlock, QShortcut,
                                QTextCharFormat, QSyntaxHighlighter, QGuiApplication,
-                               QTextBlockUserData)
+                               QTextBlockUserData, QFontMetricsF)
 from enum import Enum, auto
 from typing import cast
 from pathlib import Path
@@ -372,6 +372,7 @@ class CodeEditor(QPlainTextEdit):
         self.Font.setFamilies(["Consolas", "Courier New"])
         self.Font.setPixelSize(15)
         self.setFont(self.Font)
+        self.fm   = QFontMetricsF(self.Font)
 
         self.NormalFormat = QTextCharFormat()
         self.NormalFormat.setForeground(QColor("white"))
@@ -379,9 +380,13 @@ class CodeEditor(QPlainTextEdit):
 
         self.LineWidget = LineNumberArea(self.parent(), self, self.Font)
 
-        self.cellWidth  = self.fontMetrics().horizontalAdvance("W")
-        self.cellHeight = self.fontMetrics().height()
-        self.Ascent     = self.fontMetrics().ascent()
+        self.cellWidth  = self.fm.horizontalAdvance("W")
+        self.cellHeight = self.fm.height()
+        self.Ascent     = self.fm.ascent()
+
+        # self.cellWidth  = self.fontMetrics().horizontalAdvance("W")
+        # self.cellHeight = self.fontMetrics().height()
+        # self.Ascent     = self.fontMetrics().ascent()
 
         self.SpacePerTab = 4
         self.OldText     = self.document().toPlainText()
@@ -390,7 +395,7 @@ class CodeEditor(QPlainTextEdit):
             QPlainTextEdit.LineWrapMode.NoWrap
             )
         self.setTabStopDistance(
-            4 * self.fontMetrics().horizontalAdvance(" ")
+            4 * self.cellWidth
         )
         self.StyleConfig()
         self.HighLightLine()
@@ -507,10 +512,9 @@ class CodeEditor(QPlainTextEdit):
                     leading_spaces = len(text) - len(text.lstrip(' '))
 
                 levels = list(range(0, leading_spaces, 4))
-
+                
                 for pos in levels:
-                    x = int(base_x + (pos * self.cellWidth))
-                    
+                    x = base_x + (pos * self.cellWidth) + 2
                     # If this vertical line is the active scope AND this block falls within the contiguous scope boundaries
                     is_active_scope_line = (pos == active_pos) and (min_block_num <= block.blockNumber() <= max_block_num)
 
@@ -1651,6 +1655,7 @@ class CodeEditor(QPlainTextEdit):
             app = QApplication.instance()
             app.setCursorFlashTime(1000)
 
+
 class CodeSelection:
     def __init__(self):
         self.Select     = False
@@ -1947,6 +1952,13 @@ class syntaxHighlighter(QSyntaxHighlighter):
                         if node_text != 'self':
                             color = QColor("#fda556")
                             format.setForeground(QColor(f"#{opacity}fda556"))
+                    elif parent.type == "list_splat_pattern":
+                        Superparent = parent.parent
+                        print("SUPERPARENT =", Superparent.type)
+                        print("PARAMETERs =")
+                        if Superparent.type in {"parameters", "typed_parameter", "default_parameter", "typed_default_parameter"}:
+                            color = QColor("#fda556")
+                            format.setForeground(QColor(f"#{opacity}fda556"))
                     elif parent.type == "type":
                         color = QColor("#4dc1a0")
                         format.setForeground(QColor(f"#{opacity}4dc1a0"))
@@ -1963,7 +1975,36 @@ class syntaxHighlighter(QSyntaxHighlighter):
                         color = QColor("#4dc1a0")
                         format.setForeground(QColor(f"#{opacity}4dc1a0"))
                     else:
-                        format.setForeground(QColor(f"#{opacity}FFFFFF"))
+                        if node_text == "self":
+                            color = QColor("#FFFFFF")
+                            format.setForeground(QColor(f"#{opacity}569cd6"))
+                        is_enclosing_param = False
+                        ancestor = parent
+
+                        if parent.child_by_field_name("attribute") != currentNode:
+                            while ancestor is not None and ancestor.type != "function_definition":
+                                ancestor = ancestor.parent
+                            if ancestor is not None:
+                                params_node = ancestor.child_by_field_name("parameters")
+                                if params_node is not None:
+                                    for i in range(params_node.child_count):
+                                        param = params_node.child(i)
+                                        # Handle simple identifiers or typed parameters
+                                        if param.type in {"identifier", "typed_parameter", "default_parameter"}:
+                                            # If it's a complex parameter, we need to dig one level deeper to the identifier
+                                            param_id = param if param.type == "identifier" else param.child(0)
+                                            if param_id and param_id.type == "identifier":
+                                                p_text = param_id.text.decode('utf-8') if isinstance(param_id.text, bytes) else param_id.text
+                                                if p_text == node_text and node_text != "self":
+                                                    is_enclosing_param = True
+                                                    break
+                        if is_enclosing_param:
+                                color = QColor("#fda556")
+                                format.setForeground(QColor(f"#{opacity}fda556")) # Orange for body parameters
+                        else:
+                            color = QColor("#FFFFFF")
+                            format.setForeground(QColor(f"#{opacity}FFFFFF")) # Default light blue
+                        # format.setForeground(QColor(f"#{opacity}FFFFFF"))
                 else:
                     color = QColor("#9CDCFE")
                     format.setForeground(QColor(f"#{opacity}9CDCFE"))
