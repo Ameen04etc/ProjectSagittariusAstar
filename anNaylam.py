@@ -370,7 +370,7 @@ class CodeEditor(QPlainTextEdit):
 
         self.Font = QFont()
         self.Font.setFamilies(["Consolas", "Courier New"])
-        self.Font.setPixelSize(15)
+        self.Font.setPixelSize(13)
         self.setFont(self.Font)
         self.fm   = QFontMetricsF(self.Font)
 
@@ -989,6 +989,9 @@ class CodeEditor(QPlainTextEdit):
         # print(len(affectedBlocks))
 
         affectedBlocks =  sorted(affectedBlocks)
+
+        if self.highlightDelay == 0 and len(affectedBlocks) >= 5:
+            self.highlightDelay = 300
 
         QTimer.singleShot(self.highlightDelay, lambda: self.codeHighlight(blocks = affectedBlocks))
         self.highlightDelay = 0
