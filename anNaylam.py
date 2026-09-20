@@ -275,7 +275,7 @@ class LineNumberArea(QWidget):
         self.TotalLines = 0
         painter = QPainter(self)
         painter.setFont(self.Font)
-        painter.fillRect(self.rect(), QColor(20, 20, 20))
+        painter.fillRect(self.rect(), QColor(18, 19, 20))
 
         block = self.editor.firstVisibleBlock()
         blockNumber = block.blockNumber()
@@ -370,7 +370,7 @@ class CodeEditor(QPlainTextEdit):
 
         self.Font = QFont()
         self.Font.setFamilies(["Consolas", "Courier New"])
-        self.Font.setPixelSize(13)
+        self.Font.setPixelSize(13.5)
         self.setFont(self.Font)
         self.fm   = QFontMetricsF(self.Font)
 
@@ -426,7 +426,7 @@ class CodeEditor(QPlainTextEdit):
 
     def paintEvent(self, e):
         painter = QPainter(self.viewport())
-        painter.fillRect(e.rect(), QColor(20, 20, 20))
+        painter.fillRect(e.rect(), QColor(18, 19, 20))
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         painter.setPen(QPen(QColor(205, 49, 49), 1.5))

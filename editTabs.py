@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame, QHBoxLayout,
     QToolButton, QTreeView, QVBoxLayout, QWidget)
 
 from PySide6.QtGui import (QShortcut, QKeySequence, QAction, QKeyEvent,
-    QFont)
+    QFont, QPalette)
 
 from PySide6.QtCore import QUrl
 
@@ -18,17 +18,26 @@ class editTabs(QTabWidget):
         super().__init__(parent)
         self.setTabsClosable(True)
         self.setTabBarAutoHide(False)
+        self.setMovable(True)
+        self.tabBar().setExpanding(False)
+
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.tabBar().setAttribute(Qt.WA_StyledBackground, True)
+
+        # self.setAutoFillBackground(True)
+        # self.palette().setColor(QPalette.ColorRole.Window, QColor("#FE0000"))
+
+        self.unTitledTabs = []
+
+        self.shortCutConfig()
+        self.styleConfig()
+        self.signalManager()
 
         self.tabFont = QFont()
         self.tabFont.setFamilies(["Segoe WPC", "Segoe UI", "Arial", "sans-serif"])
         self.tabFont.setPixelSize(12)
         self.tabFont.setWeight(QFont.Weight(550))
         self.tabBar().setFont(self.tabFont)
-
-        self.unTitledTabs = []
-
-        self.shortCutConfig()
-        self.signalManager()
 
         self.newTab()
 
@@ -160,3 +169,61 @@ class editTabs(QTabWidget):
             self.addAction(action)
             action.setData(digit)
             action.triggered.connect(lambda checked = False, d = digit: self.switchTab(index = d))
+
+    def styleConfig(self):
+        self.setStyleSheet("""
+            /* 1. Base widget & header background */
+            QTabWidget {
+                background-color: rgb(18, 19, 20);
+            }
+
+            /* 2. The document / page area below the tabs (keep your dark editor color here) */
+            QTabWidget::pane {
+                border: none;
+                background-color: rgb(18, 19, 20); /* Your editor dark background */
+                top: 0px;
+            }
+
+            /* 3. The tab bar strip itself */
+            QTabBar {
+                background-color: rgb(18, 19, 20);
+            }
+
+            /* 4. Base / Inactive Tabs: Blend seamlessly into the red strip */
+            QTabBar::tab {
+                font-family: "Segoe WPC", "Segoe UI", "Arial", "sans-serif";
+                font-size: 11px;
+                font-weight: 600;
+                letter-spacing: 0.5px;
+
+                background-color: rgb(18, 19, 20);
+                color: rgb(200, 200, 200);
+
+                border: none;
+                padding: 0px 14px;
+                min-height: 25px;
+                margin: 0px;
+            }
+
+            /* Inactive hover: subtle darkening on the red */
+            QTabBar::tab:hover {
+                background-color: rgb(37, 38, 38);
+                color: rgb(200, 200, 200);
+                border: none;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+                border-bottom-left-radius: 4px;
+                border-bottom-right-radius: 4px;
+            }
+
+            /* 5. Active Selected Tab: The only distinct element */
+            QTabBar::tab:selected {
+                background-color: rgb(44, 45, 46);
+                color: rgb(255, 255, 255);
+                border: none;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+                border-bottom-left-radius: 4px;
+                border-bottom-right-radius: 4px;
+            }
+        """)

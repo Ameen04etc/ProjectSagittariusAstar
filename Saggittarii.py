@@ -10,7 +10,8 @@ from PySide6.QtCore import    (QProcess, Qt, QObject,
 from PySide6.QtWidgets import (QFileSystemModel, QHeaderView, QSizePolicy,
                                QPushButton, QToolButton)
 from PySide6.QtGui import     (QPainter, QColor, QPen,
-                               QPixmap, QFont, QMouseEvent)
+                               QPixmap, QFont, QMouseEvent,
+                               QPalette)
 from numba import njit
 import os
 import numpy as np
@@ -35,6 +36,9 @@ class MainWindow(QMainWindow):
         terminal_layout = QVBoxLayout(self.ui.terminalout)
         terminal_layout.setContentsMargins(0, 0, 0, 0)
         terminal_layout.addWidget(self.Terminal)
+
+        self.ui.codeWidget.setAutoFillBackground(True)
+        self.ui.codeWidget.palette().setColor(QPalette.ColorRole.Window, QColor("#141414"))
 
         tabs = editTabs(parent = self.ui.codeWidget)
         layout = QVBoxLayout(self.ui.codeWidget)
