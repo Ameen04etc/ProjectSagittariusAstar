@@ -409,6 +409,8 @@ class CodeEditor(QPlainTextEdit):
         self.oldNode = self.Language.syntax.Tree.root_node
         self.newNode = self.Language.syntax.Tree.root_node
 
+        self.highlightDelay = 0
+
         # self.incompleteStacks = []
         # self.brackets = {}
         # self.bracketStack = []
@@ -988,7 +990,8 @@ class CodeEditor(QPlainTextEdit):
 
         affectedBlocks =  sorted(affectedBlocks)
 
-        QTimer.singleShot(300, lambda: self.codeHighlight(blocks = affectedBlocks))
+        QTimer.singleShot(self.highlightDelay, lambda: self.codeHighlight(blocks = affectedBlocks))
+        self.highlightDelay = 0
 
         # print("------------------------")
 
@@ -1603,6 +1606,7 @@ class CodeEditor(QPlainTextEdit):
                 return
 
         elif e.key() == Qt.Key_Backspace:
+            self.highlightDelay = 300
             cursor = self.textCursor()
             pos = cursor.position()
             ch = self.document().characterAt(pos - 1)
@@ -1910,7 +1914,7 @@ class syntaxHighlighter(QSyntaxHighlighter):
                 format.setForeground(QColor(f"#{opacity}C586C0"))
                 applied = True
             elif currentNode.type in VS_KEYWORDS:
-                format.setForeground(QColor(f"#{opacity}2679BD"))
+                format.setForeground(QColor(f"#{opacity}569cd6"))
                 applied = True
             elif currentNode.type in {"import", "from", "as"}:
                 format.setForeground(QColor(f"#{opacity}c586c0"))
