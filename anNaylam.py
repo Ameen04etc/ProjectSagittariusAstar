@@ -1850,13 +1850,6 @@ class PythonLanguage(codeLanguage):
     def commentSyntax(self):
         return "#"
 
-    def keyWords(self):
-        return {
-            "and", "as", "assert", "async", "await", "break", "case", "class", "continue", "def", "del", "elif", "else", "except",
-            "False", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "None", "nonlocal", "not", "or",
-            "pass", "raise", "return", "True", "try", "while", "with", "yield"
-        }
-
 
 class syntaxHighlighter(QSyntaxHighlighter):
 
@@ -2256,7 +2249,7 @@ class LSPDocument:
         self.version    = 1
 
 
-class MasterWidget(QWidget):
+class MasterEditor(QWidget):
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -2274,7 +2267,7 @@ class MasterWidget(QWidget):
 # class  MainWindow(QMainWindow):
 #     def __init__(self, parent = None):
 #         super().__init__(parent)
-#         Main = MasterWidget(self)
+#         Main = MasterEditor(self)
 #         self.setWindowTitle("anNaylam")
 #         self.setCentralWidget(Main)
 
