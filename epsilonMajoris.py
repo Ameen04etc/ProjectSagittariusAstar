@@ -23,7 +23,8 @@ from PySide6.QtGui import     (QPainter, QColor, QPen,
                                QFontMetrics, QKeySequence, QTextFormat,
                                QTextCursor, QTextBlock, QShortcut,
                                QTextCharFormat, QSyntaxHighlighter, QGuiApplication,
-                               QTextBlockUserData, QTextOption, QResizeEvent)
+                               QTextBlockUserData, QTextOption, QResizeEvent,
+                               QFontMetricsF)
 from enum import Enum, auto
 from typing import cast
 from pathlib import Path
@@ -172,7 +173,7 @@ class TerminalWidget(QPlainTextEdit):
     ScrollCommand = Signal()
     Send_Back = Signal()
 
-    BACKGROUND = QColor(24, 24, 24)
+    BACKGROUND = QColor(25, 26, 27)
     FOREGROUND = QColor(229, 229, 229)
 
     def __init__(self, parent=None):
@@ -182,13 +183,18 @@ class TerminalWidget(QPlainTextEdit):
         self.setUndoRedoEnabled(False)
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.setWordWrapMode(QTextOption.WrapMode.NoWrap)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setFrameShape(QFrame.Shape.NoFrame)
         self.setCenterOnScroll(False)
         self.setCursorWidth(0)             # Qt's insertion cursor is not our terminal cursor.
         self.document().setDocumentMargin(0)
-        self.setStyleSheet(
-            "QPlainTextEdit { background: #181818; color: #e5e5e5; "
-            "border: 0; selection-background-color: #4d6f91; }"
-        )
+        self.setStyleSheet("""
+            QPlainTextEdit {
+                background: rgb(25, 26, 27);
+                color: #e5e5e5;
+                border: 0;
+                selection-background-color: #4d6f91;}
+        """)
 
         self.Font = QFont()
         self.Font.setPixelSize(15)
@@ -196,9 +202,12 @@ class TerminalWidget(QPlainTextEdit):
         self.Font.setStyleHint(QFont.StyleHint.Monospace)
         self.Font.setFixedPitch(True)
         self.setFont(self.Font)
-        metrics = QFontMetrics(self.Font)
+        metrics = QFontMetricsF(self.Font)
         self.CellWidth = metrics.horizontalAdvance("W")
         self.CellHeight = metrics.height()
+
+        self.styleConfig(self.verticalScrollBar())
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
 
         self.Buffer = TerminalBuffer()
         self.Parser = TerminalParser(self.Buffer)
@@ -257,9 +266,18 @@ class TerminalWidget(QPlainTextEdit):
 
     @staticmethod
     def _cell_signature(cell):
-        return (cell.SelfColor.rgba(), cell.BackColor.rgba(), cell.Bold, cell.Faint,
-                cell.Italic, cell.UndLine, cell.DbUndLine, cell.StrikeThru,
-                cell.Reverse, cell.Conceal)
+        return (
+                cell.SelfColor.rgba(),
+                cell.BackColor.rgba(),
+                cell.Bold,
+                cell.Faint,
+                cell.Italic,
+                cell.UndLine,
+                cell.DbUndLine,
+                cell.StrikeThru,
+                cell.Reverse,
+                cell.Conceal
+            )
 
     def _format_for_cell(self, cell):
         fmt = QTextCharFormat()
@@ -475,6 +493,8 @@ class TerminalWidget(QPlainTextEdit):
         event.accept()
 
     def resizeEvent(self, event : QResizeEvent):
+        print("widget width =", self.width())
+        print("viewport width =", self.viewport().width())
         oldSize = event.oldSize()
         newSize = event.size()
         if not oldSize.isValid():
@@ -486,11 +506,12 @@ class TerminalWidget(QPlainTextEdit):
         super().resizeEvent(event)
 
         if wChanged:
+            print("Width Changed")
             QTimer.singleShot(0, self._resize_terminal)
 
     def _resize_terminal(self):
-        rows = max(1, self.viewport().height() // max(1, self.CellHeight))
-        columns = max(1, self.viewport().width() // max(1, self.CellWidth))
+        rows = max(1, int(self.viewport().height() // max(1, self.CellHeight)))
+        columns = max(1, int(self.viewport().width() // max(1, self.CellWidth)))
         if rows == self.Buffer.MaxRows and columns == self.Buffer.MaxCols:
             return
         self.Buffer.MaxRows = rows
@@ -501,6 +522,48 @@ class TerminalWidget(QPlainTextEdit):
         self.Buffer.DirtyScreen = True
         self.Session.Resize(columns, rows)
         self._sync_from_buffer()
+        # QTimer.singleShot(1000, lambda: print("HIIIII\n", repr(self.toPlainText())))
+
+    def styleConfig(self, widget : QScrollBar):
+        orientation = "vertical" if widget.orientation() == Qt.Orientation.Vertical else "horizontal"
+        dimension = "width: 8px;" if orientation == "vertical" else "height: 8px;"
+        subdimension = "height: 0px;" if orientation == "vertical" else "width: 0px;"
+        mindimension = "min-height: 25px;" if orientation == "vertical" else "min-width: 25px;"
+        widget.setStyleSheet(f"""
+            QScrollBar:{orientation} {{
+                background: rgba(18, 19, 20, 128);
+                {dimension}
+                margin: 0px;
+                border: none;
+            }}
+
+            QScrollBar::handle:{orientation} {{
+                background: rgba(100, 100, 100, 128);
+                {mindimension}
+                border: none;
+                border-radius: 3px;
+            }}
+
+            QScrollBar::handle:{orientation}:hover {{
+                background: rgb(130, 130, 130);
+            }}
+
+            QScrollBar::handle:vertical:disabled {{
+                background: rgb(25, 26, 27);
+            }}
+
+            QScrollBar::add-page:{orientation},
+            QScrollBar::sub-page:{orientation} {{
+                background: rgb(25, 26, 27);
+            }}
+
+            QScrollBar::add-line:{orientation},
+            QScrollBar::sub-line:{orientation} {{
+                {subdimension}
+                background: none;
+                border: none;
+            }}
+            """)
 
 
 class TerminalWidget2(QWidget):
@@ -570,7 +633,7 @@ class TerminalWidget2(QWidget):
         termPainter.setFont(self.Font)
 
         termPainter.fillRect(
-            event.rect(), QColor(24, 24, 24)
+            event.rect(), QColor(25, 26, 27)
         )
 
         self.TermRenderer.RenderCells(self.LineImages)
@@ -1119,7 +1182,7 @@ class TerminalSession(QObject):
             self.Session.resize(cols, rows)
 
     def Read(self, data : bytes):
-        # print("PTY OUTPUT:", repr(data))
+        print("PTY OUTPUT:", repr(data))
         decoded_text = data.decode('utf-8', errors='ignore')
         # print(decoded_text, end='', flush=True)
         self.Parser.feed(data.decode())
@@ -1135,7 +1198,7 @@ class ParserState(Enum):
 
 
 class TerminalParser:
-    
+
     def __init__(self, Buffer : TerminalBuffer):
         self.Buffer = Buffer
         self.state = ParserState.GROUND
@@ -1224,7 +1287,7 @@ class TerminalParser:
     def SGRStatesRST(self):
         self.SGR_Enable = False
         self.Color      = QColor(229, 229, 229)
-        self.BackGround = QColor(24, 24, 24)
+        self.BackGround = QColor(25, 26, 27)
         self.Bold       = False
         self.Faint      = False
         self.Italic     = False
@@ -1366,12 +1429,12 @@ class TerminalParser:
                 self.Buffer.Erase_Line_Start_Curs()
             elif param == 2:
                 self.Buffer.ClearLine()
-        
+
         elif final_char == 'X': # Erase Character (ECH)
             count = getParam(0, 1)
             row = self.Buffer.Cursor.Row
             col = self.Buffer.Cursor.Col
-            
+
             if 0 <= row < len(self.Buffer.lines):
                 cells = self.Buffer.lines[row].cells
                 for i in range(count):
@@ -1461,7 +1524,7 @@ class TerminalBuffer:
         self.BottomRow    = self.TopRow + self.MaxRows - 1
 
     def InsertCharacter(self, Character, color, backColor, Bold, Faint, Italic, UndLine, DoubleUndLine, StrikeThru, Reverse, Conceal):
-
+        print("Charater =", repr(Character), "MaxCols =", self.MaxCols, "Col =", self.Cursor.Col)
         if self.Cursor.Col >= self.MaxCols:
             self.NewLine(Wrapped = True)
 
@@ -1605,7 +1668,7 @@ class TerminalCell:
 
     def __init__(self, Char = "", SelfColor=None, BackColor=None, Bold = False, Faint = False, Italic = False, UndLine = False, DoubleUndline = False, StrikeThru = False, Reverse = False, Conceal = False):
         self.char       = Char
-        self.BackColor  = BackColor if BackColor is not None else QColor(24, 24, 24)
+        self.BackColor  = BackColor if BackColor is not None else QColor(25, 26, 27)
         self.SelfColor  = SelfColor if SelfColor is not None else QColor(229, 229, 229)
         self.Bold       = Bold
         self.Faint      = Faint
