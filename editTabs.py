@@ -243,3 +243,4 @@ class editTabs(QTabWidget):
                 margin-right: 10px;
             }
         """)
+

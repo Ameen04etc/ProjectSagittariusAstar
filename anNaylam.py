@@ -401,10 +401,6 @@ class CodeEditor(QPlainTextEdit):
         self.setTabStopDistance(
             4 * self.cellWidth
         )
-        self.StyleConfig()
-        self.HighLightLine()
-        self.SignalManager()
-        self.setCursorWidth(2)
 
         self.Language.syntax.sourceUpdate(self.document().toPlainText().encode())
         # self.Language.syntax.printSyntax()
@@ -414,6 +410,18 @@ class CodeEditor(QPlainTextEdit):
         self.newNode = self.Language.syntax.Tree.root_node
 
         self.highlightDelay = 0
+
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        self.floating_vbar = self.verticalScrollBar()
+        self.floating_hbar = self.horizontalScrollBar()
+
+        self.floating_vbar.setParent(self)
+        self.floating_hbar.setParent(self)
+
+        self.styleConfig(self.floating_vbar)
+        self.styleConfig(self.floating_hbar)
 
         # self.incompleteStacks = []
         # self.brackets = {}
@@ -427,6 +435,11 @@ class CodeEditor(QPlainTextEdit):
 
         blockdata = BlockBracketData()
         self.firstVisibleBlock().setUserData(blockdata)
+
+        self.StyleConfig()
+        self.HighLightLine()
+        self.SignalManager()
+        self.setCursorWidth(2)
 
     def paintEvent(self, e):
         painter = QPainter(self.viewport())
@@ -1493,6 +1506,9 @@ class CodeEditor(QPlainTextEdit):
         self.textChanged                     .connect(self.LSPDocConfig)
         self.Language.client.diagnosticsReady.connect(self.diagnose)
         self.document().contentsChange       .connect(lambda _, rem, add: self.Context.fetchCursorContext(chRem = rem, chAdd = add))
+        self.floating_vbar.rangeChanged      .connect(self.updateFloatingScrollBars)
+        self.floating_hbar.rangeChanged      .connect(self.updateFloatingScrollBars)
+        self.floating_hbar.valueChanged      .connect(lambda: self.viewport().update())
 
     def StyleConfig(self):
         self.setStyleSheet(
@@ -1660,11 +1676,84 @@ class CodeEditor(QPlainTextEdit):
         node = self.fetchCursorNode(position = self.textCursor().position())
         # self.Language.syntax.printSyntax(node = node)
         # print(self.document().characterCount())
+    
+    def resizeEvent(self, e):
+            super().resizeEvent(e)
+            self.viewport().setGeometry(self.rect())
+            self.updateFloatingScrollBars()
+
+    def updateFloatingScrollBars(self, *args):
+        bar_thickness = 10
+        self.viewport().setGeometry(self.rect())
+
+        v_needed = self.floating_vbar.maximum() > self.floating_vbar.minimum()
+        h_needed = self.floating_hbar.maximum() > self.floating_hbar.minimum()
+
+        if v_needed:
+            self.floating_vbar.show()
+            self.floating_vbar.setGeometry(
+                self.width() - bar_thickness,
+                0,
+                bar_thickness,
+                self.height() - (bar_thickness if h_needed else 0),
+            )
+            self.floating_vbar.raise_()
+        else:
+            self.floating_vbar.hide()
+
+        if h_needed:
+            self.floating_hbar.show()
+            self.floating_hbar.setGeometry(
+                0,
+                self.height() - bar_thickness,
+                self.width() - (bar_thickness if v_needed else 0),
+                bar_thickness,
+            )
+            self.floating_hbar.raise_()
+        else:
+            self.floating_hbar.hide()
 
     def _restore_blinking(self):
             # Restore default system blink time (usually ~1000ms in Qt)
             app = QApplication.instance()
             app.setCursorFlashTime(1000)
+
+    def styleConfig(self, widget : QScrollBar):
+        orientation = "vertical" if widget.orientation() == Qt.Orientation.Vertical else "horizontal"
+        dimension = "width: 8px;" if orientation == "vertical" else "height: 8px;"
+        subdimension = "height: 0px;" if orientation == "vertical" else "width: 0px;"
+        mindimension = "min-height: 25px;" if orientation == "vertical" else "min-width: 25px;"
+        widget.setStyleSheet(f"""
+            QScrollBar:{orientation} {{
+                background: rgba(18, 19, 20, 128);
+                {dimension}
+                margin: 0px;
+                border: none;
+            }}
+
+            QScrollBar::handle:{orientation} {{
+                background: rgba(100, 100, 100, 128);
+                {mindimension}
+                border: none;
+                border-radius: 3px;
+            }}
+
+            QScrollBar::handle:{orientation}:hover {{
+                background: rgb(130, 130, 130);
+            }}
+
+            QScrollBar::add-page:{orientation},
+            QScrollBar::sub-page:{orientation} {{
+                background: rgba(18, 19, 20, 0);
+            }}
+
+            QScrollBar::add-line:{orientation},
+            QScrollBar::sub-line:{orientation} {{
+                {subdimension}
+                background: none;
+                border: none;
+            }}
+            """)
 
 
 class CodeSelection:
