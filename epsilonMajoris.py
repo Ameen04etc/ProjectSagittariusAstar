@@ -23,7 +23,7 @@ from PySide6.QtGui import     (QPainter, QColor, QPen,
                                QFontMetrics, QKeySequence, QTextFormat,
                                QTextCursor, QTextBlock, QShortcut,
                                QTextCharFormat, QSyntaxHighlighter, QGuiApplication,
-                               QTextBlockUserData, QTextOption)
+                               QTextBlockUserData, QTextOption, QResizeEvent)
 from enum import Enum, auto
 from typing import cast
 from pathlib import Path
@@ -474,9 +474,19 @@ class TerminalWidget(QPlainTextEdit):
         super().wheelEvent(event)
         event.accept()
 
-    def resizeEvent(self, event):
+    def resizeEvent(self, event : QResizeEvent):
+        oldSize = event.oldSize()
+        newSize = event.size()
+        if not oldSize.isValid():
+            super().resizeEvent(event)
+            return
+        wChanged = newSize.width() != oldSize.width()
+        hChanged = newSize.height() != oldSize.height()
+
         super().resizeEvent(event)
-        QTimer.singleShot(0, self._resize_terminal)
+
+        if wChanged:
+            QTimer.singleShot(0, self._resize_terminal)
 
     def _resize_terminal(self):
         rows = max(1, self.viewport().height() // max(1, self.CellHeight))

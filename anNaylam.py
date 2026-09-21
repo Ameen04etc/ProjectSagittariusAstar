@@ -270,6 +270,10 @@ class LineNumberArea(QWidget):
         self.RightMargin = 10
 
         self.updateWidth()
+        self.setStyleSheet("""
+            border: 2px solid rgb(45, 45, 48);
+            border-radius: 8px;
+        """)
 
     def paintEvent(self, event):
         self.TotalLines = 0

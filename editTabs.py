@@ -181,7 +181,7 @@ class editTabs(QTabWidget):
             QTabWidget::pane {
                 border: none;
                 background-color: rgb(18, 19, 20); /* Your editor dark background */
-                top: 0px;
+                top: 2px;
             }
 
             /* 3. The tab bar strip itself */
@@ -191,6 +191,10 @@ class editTabs(QTabWidget):
 
             /* 4. Base / Inactive Tabs: Blend seamlessly into the red strip */
             QTabBar::tab {
+                margin-top: 4px;
+                margin-bottom: 0px;
+                margin-left: 4px;
+
                 font-family: "Segoe WPC", "Segoe UI", "Arial", "sans-serif";
                 font-size: 11px;
                 font-weight: 600;
@@ -202,11 +206,14 @@ class editTabs(QTabWidget):
                 border: none;
                 padding: 0px 14px;
                 min-height: 25px;
-                margin: 0px;
             }
 
             /* Inactive hover: subtle darkening on the red */
             QTabBar::tab:hover {
+                margin-top: 4px;
+                margin-bottom: 0px;
+                margin-left: 4px;
+
                 background-color: rgb(37, 38, 38);
                 color: rgb(200, 200, 200);
                 border: none;
@@ -218,6 +225,10 @@ class editTabs(QTabWidget):
 
             /* 5. Active Selected Tab: The only distinct element */
             QTabBar::tab:selected {
+                margin-top: 4px;
+                margin-bottom: 0px;
+                margin-left: 4px;
+
                 background-color: rgb(44, 45, 46);
                 color: rgb(255, 255, 255);
                 border: none;
@@ -225,5 +236,10 @@ class editTabs(QTabWidget):
                 border-top-right-radius: 4px;
                 border-bottom-left-radius: 4px;
                 border-bottom-right-radius: 4px;
+            }
+
+            /* 6. Close Button */
+            QTabBar::close-button: {
+                margin-right: 10px;
             }
         """)
