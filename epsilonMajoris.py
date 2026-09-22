@@ -1529,7 +1529,7 @@ class TerminalBuffer:
         self.BottomRow    = self.TopRow + self.MaxRows - 1
 
     def InsertCharacter(self, Character, color, backColor, Bold, Faint, Italic, UndLine, DoubleUndLine, StrikeThru, Reverse, Conceal):
-        print("Charater =", repr(Character), "MaxCols =", self.MaxCols, "Col =", self.Cursor.Col)
+        # print("Charater =", repr(Character), "MaxCols =", self.MaxCols, "Col =", self.Cursor.Col)
         if self.Cursor.Col >= self.MaxCols:
             self.NewLine(Wrapped = True)
 

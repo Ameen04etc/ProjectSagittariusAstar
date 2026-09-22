@@ -19,7 +19,8 @@ from PySide6.QtGui import (QPainter, QColor, QPen,
     QFontMetrics, QKeySequence, QTextFormat,
     QTextCursor, QTextBlock, QShortcut,
     QTextCharFormat, QSyntaxHighlighter, QGuiApplication,
-    QTextBlockUserData, QFontMetricsF)
+    QTextBlockUserData, QFontMetricsF, QWheelEvent,
+    QAbstractTextDocumentLayout)
 from enum import Enum, auto
 from typing import cast
 from pathlib import Path
@@ -459,9 +460,12 @@ class CodeEditor(QPlainTextEdit):
         self.hbar_anim = QPropertyAnimation(self.hbar_effect, b"opacity")
         self.hbar_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
         self.hbar_anim.finished.connect(self._on_hbar_fade_finished)
-        
+
+        self.scrollOffset = 0
+
     def paintEvent(self, e):
         painter = QPainter(self.viewport())
+        # painter.translate(0, self.scrollOffset)
         painter.fillRect(e.rect(), QColor(18, 19, 20))
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -564,7 +568,22 @@ class CodeEditor(QPlainTextEdit):
                     painter.drawLine(x, int(top), x, int(bottom))
 
             block = block.next()
-        
+
+        # layout = self.document().documentLayout()
+        # ctx = QAbstractTextDocumentLayout.PaintContext()
+        # ctx.palette = self.palette()
+        # ctx.clip = QRectF(e.rect())
+
+        # painter.setClipRect(e.rect())
+
+        # # Move document into the viewport.
+        # painter.translate(
+        #     self.contentOffset()
+        # )
+
+        # layout.draw(painter, ctx)
+
+        painter.end()
         super().paintEvent(e)
 
     def drawSquiggle(self, painter : QPainter, squiggle : Squiggle):
@@ -1711,6 +1730,7 @@ class CodeEditor(QPlainTextEdit):
             self.vbar_anim.setStartValue(self.vbar_effect.opacity())
             self.vbar_anim.setEndValue(1.0)
             self.vbar_anim.start()
+
         if self.floating_vbar.isVisible():
             self.hbar_anim.stop()
             self.hbar_anim.setDuration(10)
@@ -1735,6 +1755,25 @@ class CodeEditor(QPlainTextEdit):
             self.hbar_anim.setStartValue(self.hbar_effect.opacity())
             self.hbar_anim.setEndValue(0.0)
             self.hbar_anim.start()
+
+    def wheelEvent(self, e : QWheelEvent):
+        deltaX = (e.angleDelta().x() / 120) * 10
+        deltaY = (e.angleDelta().y() / 120) * 10
+        self.scrollOffset += deltaY
+        print(self.scrollOffset)
+
+        event = QWheelEvent(
+            e.position(),
+            e.globalPosition(),
+            QPoint(e.pixelDelta().x(), 0),
+            QPoint(e.angleDelta().x(), 0),
+            e.buttons(),
+            e.modifiers(),
+            e.phase(),
+            e.inverted(),
+            e.source(),
+        )
+        super().wheelEvent(event)
 
     def updateFloatingScrollBars(self, *args):
         bar_thickness = 10
@@ -1990,19 +2029,19 @@ class PythonLanguage(codeLanguage):
         self.client      = LSPClient()
 
     def nextIndentation(self, cursor : QTextCursor):
-        block = cursor.block()
-        preText = block.text()[:cursor.positionInBlock()]
-
-        """
-            rstrip ---> goes to the end of a string (preText in this case) and strips off
-            the characters passed in its argument from the right (" " and "\t" in this case) INPLACE
-            endswith operates on a string checks if its last element is the passed argument or not
-        """
-        decision = preText.rstrip(" \t").endswith(":")
-        if decision:
-            return LineIndent.Indent
-        else:
-            return LineIndent.Keep
+            block = cursor.block()
+            preText = block.text()[:cursor.positionInBlock()]
+    
+            """
+                rstrip ---> goes to the end of a string (preText in this case) and strips off
+                the characters passed in its argument from the right (" " and "\t" in this case) INPLACE
+                endswith operates on a string checks if its last element is the passed argument or not
+            """
+            decision = preText.rstrip(" \t").endswith(":")
+            if decision:
+                return LineIndent.Indent
+            else:
+                return LineIndent.Keep
 
     def commentSyntax(self):
         return "#"
