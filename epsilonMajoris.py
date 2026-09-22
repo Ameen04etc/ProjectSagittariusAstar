@@ -193,7 +193,11 @@ class TerminalWidget(QPlainTextEdit):
                 background: rgb(25, 26, 27);
                 color: #e5e5e5;
                 border: 0;
-                selection-background-color: #4d6f91;}
+                border-radius: 10px;
+                selection-background-color: #4d6f91;
+                padding-left: 10px;
+                padding-right:-9px;
+                }
         """)
 
         self.Font = QFont()
@@ -555,6 +559,7 @@ class TerminalWidget(QPlainTextEdit):
             QScrollBar::add-page:{orientation},
             QScrollBar::sub-page:{orientation} {{
                 background: rgb(25, 26, 27);
+                border: none;
             }}
 
             QScrollBar::add-line:{orientation},

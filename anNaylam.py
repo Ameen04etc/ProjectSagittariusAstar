@@ -1,24 +1,25 @@
 from importlib.resources import path
 from Sagittarius_A import Ui_SagittariusA
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
-                               QSplitter, QVBoxLayout, QHBoxLayout,
-                               QGridLayout, QScrollBar, QSizePolicy,
-                               QPushButton, QToolButton, QToolTip,
-                               QFrame, QLabel, QTreeView,
-                               QPlainTextEdit, QTextEdit, QFileDialog)
-from PySide6.QtCore import    (QProcess, Qt, QObject,
-                               Signal, QRectF, QRect,
-                               Slot, QPointF, QPoint,
-                               QSize, QEvent, QSignalBlocker,
-                               QTimer, QRegularExpression)
-from PySide6.QtGui import     (QPainter, QColor, QPen,
-                               QPixmap, QFont, QMouseEvent,
-                               QImage, QCursor, QPainterPath,
-                               QStandardItemModel, QStandardItem,
-                               QFontMetrics, QKeySequence, QTextFormat,
-                               QTextCursor, QTextBlock, QShortcut,
-                               QTextCharFormat, QSyntaxHighlighter, QGuiApplication,
-                               QTextBlockUserData, QFontMetricsF)
+    QSplitter, QVBoxLayout, QHBoxLayout,
+    QGridLayout, QScrollBar, QSizePolicy,
+    QPushButton, QToolButton, QToolTip,
+    QFrame, QLabel, QTreeView, QGraphicsOpacityEffect,
+    QPlainTextEdit, QTextEdit, QFileDialog)
+from PySide6.QtCore import (QProcess, Qt, QObject,
+    Signal, QRectF, QRect,
+    Slot, QPointF, QPoint,
+    QSize, QEvent, QSignalBlocker,
+    QTimer, QRegularExpression, QPropertyAnimation,
+    QEasingCurve)
+from PySide6.QtGui import (QPainter, QColor, QPen,
+    QPixmap, QFont, QMouseEvent,
+    QImage, QCursor, QPainterPath,
+    QStandardItemModel, QStandardItem,
+    QFontMetrics, QKeySequence, QTextFormat,
+    QTextCursor, QTextBlock, QShortcut,
+    QTextCharFormat, QSyntaxHighlighter, QGuiApplication,
+    QTextBlockUserData, QFontMetricsF)
 from enum import Enum, auto
 from typing import cast
 from pathlib import Path
@@ -440,6 +441,22 @@ class CodeEditor(QPlainTextEdit):
         self.HighLightLine()
         self.SignalManager()
         self.setCursorWidth(2)
+
+        # -- Vertical Bar Animation Setup --
+        self.vbar_effect = QGraphicsOpacityEffect(self.floating_vbar)
+        self.floating_vbar.setGraphicsEffect(self.vbar_effect)
+        
+        self.vbar_anim = QPropertyAnimation(self.vbar_effect, b"opacity")
+        self.vbar_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self.vbar_anim.finished.connect(self._on_vbar_fade_finished)
+
+        # -- Horizontal Bar Animation Setup --
+        self.hbar_effect = QGraphicsOpacityEffect(self.floating_hbar)
+        self.floating_hbar.setGraphicsEffect(self.hbar_effect)
+
+        self.hbar_anim = QPropertyAnimation(self.hbar_effect, b"opacity")
+        self.hbar_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self.hbar_anim.finished.connect(self._on_hbar_fade_finished)
 
     def paintEvent(self, e):
         painter = QPainter(self.viewport())
@@ -1682,6 +1699,40 @@ class CodeEditor(QPlainTextEdit):
             self.viewport().setGeometry(self.rect())
             self.updateFloatingScrollBars()
 
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.updateFloatingScrollBars()
+        if self.floating_hbar.isVisible():
+            self.vbar_anim.stop()
+            self.vbar_anim.setDuration(10)
+            self.vbar_anim.setStartValue(self.vbar_effect.opacity())
+            self.vbar_anim.setEndValue(1.0)
+            self.vbar_anim.start()
+        if self.floating_vbar.isVisible():
+            self.hbar_anim.stop()
+            self.hbar_anim.setDuration(10)
+            self.hbar_anim.setStartValue(self.hbar_effect.opacity())
+            self.hbar_anim.setEndValue(1.0)
+            self.hbar_anim.start()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        
+        if self.floating_vbar.isVisible():
+            self.vbar_anim.stop()
+            self.vbar_anim.setDuration(500)  # 500 milliseconds fade
+            self.vbar_anim.setStartValue(self.vbar_effect.opacity())
+            self.vbar_anim.setEndValue(0.0)
+            self.vbar_anim.start()
+
+        # Fade out horizontal bar
+        if self.floating_hbar.isVisible():
+            self.hbar_anim.stop()
+            self.hbar_anim.setDuration(500)
+            self.hbar_anim.setStartValue(self.hbar_effect.opacity())
+            self.hbar_anim.setEndValue(0.0)
+            self.hbar_anim.start()
+
     def updateFloatingScrollBars(self, *args):
         bar_thickness = 10
         self.viewport().setGeometry(self.rect())
@@ -1718,6 +1769,14 @@ class CodeEditor(QPlainTextEdit):
             app = QApplication.instance()
             app.setCursorFlashTime(1000)
 
+    def _on_vbar_fade_finished(self):
+        if self.vbar_effect.opacity() == 0.0:
+            self.floating_vbar.hide()
+
+    def _on_hbar_fade_finished(self):
+        if self.hbar_effect.opacity() == 0.0:
+            self.floating_hbar.hide()
+        
     def styleConfig(self, widget : QScrollBar):
         orientation = "vertical" if widget.orientation() == Qt.Orientation.Vertical else "horizontal"
         dimension = "width: 8px;" if orientation == "vertical" else "height: 8px;"
@@ -1739,7 +1798,7 @@ class CodeEditor(QPlainTextEdit):
             }}
 
             QScrollBar::handle:{orientation}:hover {{
-                background: rgb(130, 130, 130);
+                background: rgba(130, 130, 130, 130);
             }}
 
             QScrollBar::add-page:{orientation},
