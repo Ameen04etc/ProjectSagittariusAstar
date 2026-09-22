@@ -29,11 +29,9 @@ import json
 import os
 import sys
 import re
-import cv2
+import threading
 import math
 import time
-import shiboken6
-import traceback
 
 RED    = "\033[31m"
 GREEN  = "\033[32m"
@@ -329,6 +327,7 @@ class LineNumberArea(QWidget):
         y = event.position().y()
         if self.LeftMargin < x < self.width() - self.RightMargin:
             LineSelect = int((y - round(self.editor.blockBoundingGeometry(self.editor.firstVisibleBlock()).translated(self.editor.contentOffset()).top())) / self.cellHeight) + self.TopIdx
+            # print("LineSelect =", LineSelect)
             if self.TopIdx <= LineSelect <= self.TotalLines + self.TopIdx - 1:
                 self.lineSelectEmit.emit((LineSelect - 1), False)
         super().mousePressEvent(event)
@@ -375,7 +374,7 @@ class CodeEditor(QPlainTextEdit):
 
         self.Font = QFont()
         self.Font.setFamilies(["Consolas", "Courier New"])
-        self.Font.setPixelSize(13.5)
+        self.Font.setPixelSize(15)
         self.setFont(self.Font)
         self.fm   = QFontMetricsF(self.Font)
 
@@ -410,7 +409,10 @@ class CodeEditor(QPlainTextEdit):
         self.oldNode = self.Language.syntax.Tree.root_node
         self.newNode = self.Language.syntax.Tree.root_node
 
-        self.highlightDelay = 0
+        self.highlightVersion = 0
+        self.pendingBlocks    = set()
+        self.highlightTimer   = QTimer()
+        self.highlightTimer.setSingleShot(True)
 
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -457,7 +459,7 @@ class CodeEditor(QPlainTextEdit):
         self.hbar_anim = QPropertyAnimation(self.hbar_effect, b"opacity")
         self.hbar_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
         self.hbar_anim.finished.connect(self._on_hbar_fade_finished)
-
+        
     def paintEvent(self, e):
         painter = QPainter(self.viewport())
         painter.fillRect(e.rect(), QColor(18, 19, 20))
@@ -1014,25 +1016,59 @@ class CodeEditor(QPlainTextEdit):
         for row in range(oldStartRow, newEndRow + 1):
             affectedBlocks.add(row)
 
-        # print(changed_ranges)
-
         for rng in changed_ranges:
             for row in range(rng.start_point[0], rng.end_point[0] + 1):
                 affectedBlocks.add(row)
 
-        # print(len(affectedBlocks))
-
-        affectedBlocks =  sorted(affectedBlocks)
-
-        if self.highlightDelay == 0 and len(affectedBlocks) >= 5:
-            self.highlightDelay = 300
-
-        QTimer.singleShot(self.highlightDelay, lambda: self.codeHighlight(blocks = affectedBlocks))
-        self.highlightDelay = 0
-
-        # print("------------------------")
+        self.pendingBlocks.update(affectedBlocks)
+        self.highlightVersion += 1
+        self.highlightTimer.start(300)
 
         self.OldText = newText
+
+    def executeHighlight(self):
+        blocks = sorted(list(self.pendingBlocks))
+        self.pendingBlocks.clear()
+        self.codeHighlight(blocks = blocks)
+
+    def codeHighlight(self, blocks = None, refresh = False):
+        if refresh:
+            blocks = list(range(self.blockCount()))
+        blocks = list(range(self.blockCount()))
+
+        if not blocks:
+            return
+
+        currentVersion = self.highlightVersion
+
+        new = self.bracketMatching(affectedBlocks = blocks)
+        # print("WILL REHIGHLIGHT:", blocks)
+        blocks.extend(new)
+
+        chunkLen = 6
+
+        def highlightNextChunk(idx):
+            if currentVersion != self.highlightVersion:
+                return
+            
+            chunk = blocks[idx:idx + chunkLen]
+
+            for blockID in chunk:
+                block = self.document().findBlockByNumber(blockID)
+
+                if block.isValid():
+                    self.Language.Highlighter.rehighlightBlock(block)
+                    # pass
+
+            nextIdx = idx + chunkLen
+
+            if nextIdx < len(blocks):
+                QTimer.singleShot(
+                    0,
+                    lambda: highlightNextChunk(nextIdx)
+                )
+
+        highlightNextChunk(0)
 
     def bracketMatching(self, affectedBlocks):
         # print("Old =", self.blockBracketStack)
@@ -1451,39 +1487,6 @@ class CodeEditor(QPlainTextEdit):
         # for key in self.brackets:
         #     print(key, self.brackets[key])
 
-    def codeHighlight(self, blocks = None, refresh = False):
-        if refresh:
-            blocks = list(range(self.blockCount()))
-
-        if not blocks:
-            return
-
-        new = self.bracketMatching(affectedBlocks = blocks)
-        # print("WILL REHIGHLIGHT:", blocks)
-        blocks.extend(new)
-
-        chunkLen = 6
-
-        def highlightNextChunk(idx):
-            chunk = blocks[idx:idx + chunkLen]
-
-            for blockID in chunk:
-                block = self.document().findBlockByNumber(blockID)
-
-                if block.isValid():
-                    self.Language.Highlighter.rehighlightBlock(block)
-                    # pass
-
-            nextIdx = idx + chunkLen
-
-            if nextIdx < len(blocks):
-                QTimer.singleShot(
-                    0,
-                    lambda: highlightNextChunk(nextIdx)
-                )
-
-        highlightNextChunk(0)
-
     def fetchCursorNode(self, Tree = None, position =  None):
         if Tree is None: Tree = self.Language.syntax.Tree
         cursor = self.textCursor()
@@ -1507,7 +1510,6 @@ class CodeEditor(QPlainTextEdit):
 
     def SignalManager(self):
         # self.fileOpenShortcut = QShortcut(QKeySequence("Ctrl + O"), self)
-
         # self.fileOpenShortcut.activated      .connect(self.openFile)
         self.blockCountChanged               .connect(self.updateLineData)
         self.cursorPositionChanged           .connect(self.updateLineData)
@@ -1526,6 +1528,7 @@ class CodeEditor(QPlainTextEdit):
         self.floating_vbar.rangeChanged      .connect(self.updateFloatingScrollBars)
         self.floating_hbar.rangeChanged      .connect(self.updateFloatingScrollBars)
         self.floating_hbar.valueChanged      .connect(lambda: self.viewport().update())
+        self.highlightTimer.timeout          .connect(self.executeHighlight)
 
     def StyleConfig(self):
         self.setStyleSheet(
@@ -1920,6 +1923,7 @@ class Coordinate:
 
 
 class codeLanguage:
+
     def nextIndentation(self, cursor : QTextCursor):
         raise NotImplementedError
 
@@ -1931,6 +1935,7 @@ class codeLanguage:
 
 
 class syntaxTree:
+
     def __init__(self, language):
         self.Parser = Parser(language)
         self.Source = b""
@@ -2106,8 +2111,6 @@ class syntaxHighlighter(QSyntaxHighlighter):
                             format.setForeground(QColor(f"#{opacity}fda556"))
                     elif parent.type == "list_splat_pattern":
                         Superparent = parent.parent
-                        print("SUPERPARENT =", Superparent.type)
-                        print("PARAMETERs =")
                         if Superparent.type in {"parameters", "typed_parameter", "default_parameter", "typed_default_parameter"}:
                             color = QColor("#fda556")
                             format.setForeground(QColor(f"#{opacity}fda556"))
