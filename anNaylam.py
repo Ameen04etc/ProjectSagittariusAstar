@@ -20,7 +20,7 @@ from PySide6.QtGui import (QPainter, QColor, QPen,
     QTextCursor, QTextBlock, QShortcut,
     QTextCharFormat, QSyntaxHighlighter, QGuiApplication,
     QTextBlockUserData, QFontMetricsF, QWheelEvent,
-    QAbstractTextDocumentLayout)
+    QAbstractTextDocumentLayout, QMouseEvent)
 from enum import Enum, auto
 from typing import cast
 from pathlib import Path
@@ -172,6 +172,22 @@ DELIMITER = {
     "argument_list"           : ("(", ")")
 }
 
+FOLDABLE_BLOCKS = {
+    "function_definition",
+    "class_definition",
+
+    "if_statement",
+    "for_statement",
+    "while_statement",
+
+    "try_statement",
+    "except_clause",
+    "with_statement",
+    "match_statement",
+}
+
+FOLDABLE_DELIMITERS = set(DELIMITER.keys())
+
 RAINBOW_COLORS = [
     QColor("#ffd700"),
     QColor("#d86fd4"),
@@ -257,9 +273,12 @@ class LineNumberArea(QWidget):
         self.editor     = editor
         self.Font       = Font
 
-        self.cellWidth  = QFontMetrics(self.Font).horizontalAdvance("W")
-        self.cellHeight = QFontMetrics(self.Font).height()
-        self.Ascent     = QFontMetrics(self.Font).ascent()
+        fm = QFontMetricsF(Font)
+
+        self.cellWidth  = fm.horizontalAdvance("W")
+        self.cellHeight = fm.height()
+        self.Ascent     = fm.ascent()
+        print("Cell Height Next =", self.cellHeight)
 
         self.TotalLines = 1
         self.TopIdx     = 0
@@ -267,7 +286,9 @@ class LineNumberArea(QWidget):
         self.CursIdx    = 0
 
         self.LeftMargin  = 5
-        self.RightMargin = 10
+        self.RightMargin = 20
+
+        self.showFold = False
 
         self.updateWidth()
         self.setStyleSheet("""
@@ -275,11 +296,18 @@ class LineNumberArea(QWidget):
             border-radius: 8px;
         """)
 
+        self.setMouseTracking(True)
+
     def paintEvent(self, event):
         self.TotalLines = 0
         painter = QPainter(self)
         painter.setFont(self.Font)
         painter.fillRect(self.rect(), QColor(18, 19, 20))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        w = 6
+        o = 4
+        h = 2
 
         block = self.editor.firstVisibleBlock()
         blockNumber = block.blockNumber()
@@ -295,14 +323,29 @@ class LineNumberArea(QWidget):
                 opacity = 80
                 if blockNumber == self.CursIdx:
                     opacity = 200
+
+                line_str = str(blockNumber + 1)
                 
                 painter.setPen(QPen(QColor(255, 255, 255, opacity)))
 
-                line_str = str(blockNumber + 1)
-                textWidth = self.fontMetrics().horizontalAdvance(line_str)
-                x = self.width() - self.RightMargin - textWidth
+                rect = QRectF(
+                    float(self.LeftMargin),
+                    float(top),
+                    float(self.width() - self.LeftMargin - self.RightMargin),
+                    float(self.cellHeight)
+                )
+                painter.drawText(rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, line_str)
 
-                painter.drawText(x, top + self.Ascent, line_str)
+                if self.showFold:
+                    if block.blockNumber() in self.editor.FoldManager.regions.keys():
+                        painter.drawLine(
+                            self.width() - self.RightMargin + w, top + o + h,
+                            self.width() - self.RightMargin // 2, top + self.Ascent // 2 + o + 2 - h
+                        )
+                        painter.drawLine(
+                           self.width() - self.RightMargin // 2, top + self.Ascent // 2 + o + 2 - h,
+                            self.width() - w, top + o + h
+                        )
 
                 # painter.drawRect(x, top, self.RightMargin + textWidth, self.cellHeight)
                 # cellRect = QRect(
@@ -333,17 +376,110 @@ class LineNumberArea(QWidget):
                 self.lineSelectEmit.emit((LineSelect - 1), False)
         super().mousePressEvent(event)
 
+    def mouseMoveEvent(self, event : QMouseEvent):
+        x = event.position().x()
+        y = event.position().y()
+        if self.width() - self.RightMargin < x < self.width():
+            lineNo = (y - 2) // self.cellHeight + self.editor.firstVisibleBlock().blockNumber()
+            print(lineNo)
+            if lineNo in self.editor.FoldManager.regions.keys():
+                self.setCursor(Qt.CursorShape.PointingHandCursor)
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        super().mouseMoveEvent(event)
+
     def wheelEvent(self, event):
         self.scrollEmit.emit(event)
+
+        x = event.position().x()
+        y = event.position().y()
+        if self.width() - self.RightMargin < x < self.width():
+            lineNo = (y - 2) // self.cellHeight + self.editor.firstVisibleBlock().blockNumber()
+            print(lineNo)
+            if lineNo in self.editor.FoldManager.regions.keys():
+                self.setCursor(Qt.CursorShape.PointingHandCursor)
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
         super().wheelEvent(event)
 
     def enterEvent(self, event):
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.showFold = True
+        self.update()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
+        self.showFold = False
+        self.update()
         self.setCursor(Qt.CursorShape.ArrowCursor)
         super().leaveEvent(event)
+
+
+class FoldRegion:
+    def __init__(self, node):
+        self.type = node.type
+        self.start_byte = node.start_byte
+        self.end_byte = node.end_byte
+        self.start_line = node.start_point[0]
+        self.end_line = node.end_point[0]
+
+    def __repr__(self):
+        return (
+            f"FoldRegion("
+            f"{self.type}, "
+            f"{self.start_line + 1}-{self.end_line + 1}, "
+            f"bytes={self.start_byte}:{self.end_byte})"
+        )
+
+
+class FoldManager:
+
+    def __init__(self, editor):
+        self.editor = editor
+        self.regions = {}
+
+    def isFoldable(self, node):
+        # Must span more than one line
+        if node.start_point[0] >= node.end_point[0]:
+            return False
+
+        # Normal Python blocks
+        if node.type in FOLDABLE_BLOCKS:
+            return True
+
+        # Multiline delimiter structures
+        if node.type in FOLDABLE_DELIMITERS:
+            return True
+
+        return False
+
+    def collectAll(self, tree):
+        regions = {}
+
+        def visit(node):
+            if self.isFoldable(node):
+                regions.update({FoldRegion(node).start_line : FoldRegion(node)})
+            for child in node.children:
+                visit(child)
+
+        visit(tree.root_node)
+        return regions
+
+    def initialScan(self, tree):
+        self.regions = self.collectAll(tree)
+        self.debugPrint()
+
+    def update(self, oldTree, newTree, changed_ranges):
+        self.regions = self.collectAll(newTree)
+        self.debugPrint()
+
+    def debugPrint(self):
+        print("\n===== FOLDABLE REGIONS =====")
+        for region in self.regions:
+            print(region)
 
 
 class CodeEditor(QPlainTextEdit):
@@ -383,11 +519,11 @@ class CodeEditor(QPlainTextEdit):
         self.NormalFormat.setForeground(QColor("white"))
         self.textCursor().mergeCharFormat(self.NormalFormat)
 
-        self.LineWidget = LineNumberArea(self.parent(), self, self.Font)
-
         self.cellWidth  = self.fm.horizontalAdvance("W")
         self.cellHeight = self.fm.height()
         self.Ascent     = self.fm.ascent()
+
+        print("Cell Height =", self.cellHeight)
 
         # self.cellWidth  = self.fontMetrics().horizontalAdvance("W")
         # self.cellHeight = self.fontMetrics().height()
@@ -409,6 +545,9 @@ class CodeEditor(QPlainTextEdit):
         self.newTree = self.Language.syntax.Tree
         self.oldNode = self.Language.syntax.Tree.root_node
         self.newNode = self.Language.syntax.Tree.root_node
+
+        self.FoldManager = FoldManager(self)
+        self.LineWidget  = LineNumberArea(self.parent(), self, self.Font)
 
         self.highlightVersion = 0
         self.pendingBlocks    = set()
@@ -916,8 +1055,10 @@ class CodeEditor(QPlainTextEdit):
             self.Language.syntax.sourceUpdate(
                 self.toPlainText().encode("utf-8"),
                 incremental = False
-                )
+            )
+            self.newTree = self.Language.syntax.Tree
             self.OldText = self.toPlainText()
+            self.FoldManager.initialScan(self.newTree)
             # self.fileOpened.emit(fileName)
 
             QTimer.singleShot(50, lambda: self.codeHighlight(refresh = True))
@@ -998,11 +1139,11 @@ class CodeEditor(QPlainTextEdit):
 
         oldStart = position
         oldEnd   = position + charRem
-        oldStartRow, oldStartCol16, oldStartCol8, oldStartByte = self.QOffsetToCoords(self.OldText, oldStart)
-        oldEndRow  , oldEndCol16  , oldEndCol8  , oldEndByte   = self.QOffsetToCoords(self.OldText, oldEnd)
+        oldStartRow, _, oldStartCol8, oldStartByte = self.QOffsetToCoords(self.OldText, oldStart)
+        oldEndRow  , _, oldEndCol8  , oldEndByte   = self.QOffsetToCoords(self.OldText, oldEnd)
 
         newEnd   = position + charAdd
-        newEndRow, newEndCol16, newEndCol8, newEndByte = self.QOffsetToCoords(newText, newEnd)
+        newEndRow, _, newEndCol8, newEndByte = self.QOffsetToCoords(newText, newEnd)
 
         self.oldTree.edit(
             start_byte   = oldStartByte,
@@ -1024,11 +1165,16 @@ class CodeEditor(QPlainTextEdit):
             new_end_point = (newEndRow, newEndCol8),
         )
 
-
         self.Language.syntax.sourceUpdate(newText.encode("utf-8"), incremental = True)
 
         self.newTree = self.Language.syntax.Tree
         changed_ranges = self.oldTree.changed_ranges(self.newTree)
+
+        self.FoldManager.update(
+            self.oldTree,
+            self.newTree,
+            changed_ranges
+        )
 
         affectedBlocks = set()
 
@@ -1041,7 +1187,7 @@ class CodeEditor(QPlainTextEdit):
 
         self.pendingBlocks.update(affectedBlocks)
         self.highlightVersion += 1
-        self.highlightTimer.start(300)
+        self.highlightTimer.start(100)
 
         self.OldText = newText
 
@@ -1630,12 +1776,22 @@ class CodeEditor(QPlainTextEdit):
                     nextIndent = LineIndent.Dedent
                 else:
                     nextIndent = LineIndent.Keep
+                    while node.parent:
+                        node = node.parent
+                        if node.type in DEDENT:
+                            nextIndent = LineIndent.Dedent
+                            break
             elif node.type in INDENT:
                 nextIndent = LineIndent.Indent
             elif node.type in DEDENT:
                 nextIndent = LineIndent.Dedent
             else:
                 nextIndent = LineIndent.Keep
+                while node.parent:
+                    node = node.parent
+                    if node.type in DEDENT:
+                        nextIndent = LineIndent.Dedent
+                        break
 
             cursor.insertText("\n" + indentation)
 
@@ -1713,9 +1869,9 @@ class CodeEditor(QPlainTextEdit):
         if e.button() == Qt.RightButton:
             self.Language.syntax.printSyntax()
         node = self.fetchCursorNode(position = self.textCursor().position())
-        # self.Language.syntax.printSyntax(node = node)
+        self.Language.syntax.printSyntax(node = node)
         # print(self.document().characterCount())
-    
+
     def resizeEvent(self, e):
             super().resizeEvent(e)
             self.viewport().setGeometry(self.rect())
@@ -1757,10 +1913,8 @@ class CodeEditor(QPlainTextEdit):
             self.hbar_anim.start()
 
     def wheelEvent(self, e : QWheelEvent):
-        deltaX = (e.angleDelta().x() / 120) * 10
         deltaY = (e.angleDelta().y() / 120) * 10
         self.scrollOffset += deltaY
-        print(self.scrollOffset)
 
         event = QWheelEvent(
             e.position(),
@@ -1773,7 +1927,7 @@ class CodeEditor(QPlainTextEdit):
             e.inverted(),
             e.source(),
         )
-        super().wheelEvent(event)
+        super().wheelEvent(e)
 
     def updateFloatingScrollBars(self, *args):
         bar_thickness = 10
