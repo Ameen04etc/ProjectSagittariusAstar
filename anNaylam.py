@@ -30,6 +30,7 @@ import json
 import os
 import sys
 import re
+import copy
 import threading
 import math
 import time
@@ -177,6 +178,8 @@ FOLDABLE_BLOCKS = {
     "class_definition",
 
     "if_statement",
+    "elif_clause",
+    "else_clause",
     "for_statement",
     "while_statement",
 
@@ -198,6 +201,7 @@ INDENT = {"if_statement", "else_clause", "elif_clause", "for_statement", "while_
 
 DEDENT = {"return_statement", "break_statement"}
 
+
 def ListIdx(listObject : list, target):
     try:
         idx = listObject.index(target)
@@ -205,6 +209,10 @@ def ListIdx(listObject : list, target):
         idx = None
 
     return idx
+
+
+def dictSort(dictionary : dict[int : ]):
+    return {key : dictionary[key] for key in sorted(dictionary.keys())}
 
 
 class LineIndent(Enum):
@@ -278,23 +286,23 @@ class LineNumberArea(QWidget):
         self.cellWidth  = fm.horizontalAdvance("W")
         self.cellHeight = fm.height()
         self.Ascent     = fm.ascent()
-        print("Cell Height Next =", self.cellHeight)
 
         self.TotalLines = 1
         self.TopIdx     = 0
         self.BotIdx     = 0
         self.CursIdx    = 0
 
-        self.LeftMargin  = 5
-        self.RightMargin = 20
+        self.LeftMargin  = 20
+        self.RightMargin = self.cellHeight
 
         self.showFold = False
-
+        self.onHandle = False
         self.updateWidth()
         self.setStyleSheet("""
             border: 2px solid rgb(45, 45, 48);
             border-radius: 8px;
         """)
+        self.foldColor = QColor(46, 82, 98, 128)
 
         self.setMouseTracking(True)
 
@@ -304,10 +312,6 @@ class LineNumberArea(QWidget):
         painter.setFont(self.Font)
         painter.fillRect(self.rect(), QColor(18, 19, 20))
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        w = 6
-        o = 4
-        h = 2
 
         block = self.editor.firstVisibleBlock()
         blockNumber = block.blockNumber()
@@ -319,13 +323,20 @@ class LineNumberArea(QWidget):
 
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
+
+                A = QPointF((self.width() + 3 * (self.width() - self.RightMargin)) / 4, ((top + self.cellHeight) + 3 * top) / 4)
+                B = QPointF((self.width() + 3 * (self.width() - self.RightMargin)) / 4, (3 * (top + self.cellHeight) + top) / 4)
+                C = QPointF((3 * self.width() + (self.width() - self.RightMargin)) / 4, (3 * (top + self.cellHeight) + top) / 4)
+                D = QPointF((3 * self.width() + (self.width() - self.RightMargin)) / 4, ((top + self.cellHeight) + 3 * top) / 4)
+                O = QPointF((self.width() + (self.width() - self.RightMargin)) / 2, ((top + self.cellHeight) + top) / 2)
+
                 self.TotalLines += 1
                 opacity = 80
                 if blockNumber == self.CursIdx:
                     opacity = 200
 
                 line_str = str(blockNumber + 1)
-                
+
                 painter.setPen(QPen(QColor(255, 255, 255, opacity)))
 
                 rect = QRectF(
@@ -334,17 +345,32 @@ class LineNumberArea(QWidget):
                     float(self.width() - self.LeftMargin - self.RightMargin),
                     float(self.cellHeight)
                 )
+                rectM = QRectF(
+                    float(self.width() - self.RightMargin),
+                    float(top),
+                    float(self.RightMargin),
+                    float(self.cellHeight)
+                )
                 painter.drawText(rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, line_str)
+                # painter.drawRect(rectM)
+                # painter.drawRect(rect)
+
+                if blockNumber in self.editor.foldSelection.keys():
+                    painter.drawLine(
+                        A + QPointF(self.RightMargin / 8, 0), O + QPointF(self.RightMargin / 8, 0)
+                    )
+
+                    painter.drawLine(
+                        O + QPointF(self.RightMargin / 8, 0), B + QPointF(self.RightMargin / 8, 0)
+                    )
 
                 if self.showFold:
-                    if block.blockNumber() in self.editor.FoldManager.regions.keys():
+                    if blockNumber in self.editor.FoldManager.regions.keys() and blockNumber not in self.editor.foldSelection.keys():
                         painter.drawLine(
-                            self.width() - self.RightMargin + w, top + o + h,
-                            self.width() - self.RightMargin // 2, top + self.Ascent // 2 + o + 2 - h
+                            A + QPointF(0, self.cellHeight / 8), O + QPointF(0, self.cellHeight / 8)
                         )
                         painter.drawLine(
-                           self.width() - self.RightMargin // 2, top + self.Ascent // 2 + o + 2 - h,
-                            self.width() - w, top + o + h
+                            O + QPointF(0, self.cellHeight / 8), D + QPointF(0, self.cellHeight / 8)
                         )
 
                 # painter.drawRect(x, top, self.RightMargin + textWidth, self.cellHeight)
@@ -366,28 +392,104 @@ class LineNumberArea(QWidget):
         self.setFixedWidth(newWidth)
         self.update()
 
+    def findBlocks(self, blockNo, array : list):
+        if blockNo not in self.editor.foldSelection.keys() and blockNo in self.editor.FoldManager.regions.keys():
+            for idx in range(blockNo + 1, self.editor.FoldManager.regions[blockNo].end_line + 1):
+                if idx not in self.editor.foldSelection.keys():
+                    array.append(idx)
+                else:
+                    self.findBlocks(blockNo = idx, array = array)
+
     def mousePressEvent(self, event):
         x = event.position().x()
         y = event.position().y()
+        cursor = self.editor.cursorForPosition(QPoint(int(x), int(y)))
+        lineNo = cursor.blockNumber()
         if self.LeftMargin < x < self.width() - self.RightMargin:
-            LineSelect = int((y - round(self.editor.blockBoundingGeometry(self.editor.firstVisibleBlock()).translated(self.editor.contentOffset()).top())) / self.cellHeight) + self.TopIdx
-            # print("LineSelect =", LineSelect)
-            if self.TopIdx <= LineSelect <= self.TotalLines + self.TopIdx - 1:
-                self.lineSelectEmit.emit((LineSelect - 1), False)
+            self.lineSelectEmit.emit((lineNo), False)
+
+        if self.onHandle is not None:
+            self.editor.FoldManager.regions[self.onHandle].fold = not self.editor.FoldManager.regions[self.onHandle].fold
+            if self.editor.FoldManager.regions[self.onHandle].fold:
+                toFold = []
+                for block in range (self.editor.FoldManager.regions[self.onHandle].start_line + 1, self.editor.FoldManager.regions[self.onHandle].end_line + 1):
+                    toFold.append(block)
+
+                self.editor.fold(blockNos = toFold)
+                print("Fold =", [k + 1 for k in toFold])
+
+                selection = QTextEdit.ExtraSelection()
+                selection.format.setBackground(self.foldColor)
+                selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+
+                cursor.clearSelection()
+                selection.cursor = cursor
+
+                self.editor.foldSelection.update({self.onHandle : selection})
+                QTimer.singleShot(0, lambda: dictSort(dictionary = self.editor.foldSelection))
+                print("fold selection =", [k + 1 for k in self.editor.foldSelection.keys()])
+                print("------------")
+
+            else:
+                toUnFold = []
+                blockNo = self.editor.FoldManager.regions[self.onHandle].start_line + 1
+                lastNo = self.editor.FoldManager.regions[self.onHandle].end_line
+                while True:
+                    if blockNo > lastNo:
+                        break
+
+                    elif blockNo not in self.editor.FoldManager.regions.keys():
+                        print("elif ->", blockNo + 1)
+                        toUnFold.append(blockNo)
+                        blockNo += 1
+
+                    else:
+                        print("else ->", blockNo + 1)
+                        toUnFold.append(blockNo)
+                        if blockNo not in self.editor.foldSelection.keys():
+                            idx = blockNo + 1
+                            while True:
+                                if idx > self.editor.FoldManager.regions[blockNo].end_line:
+                                    break
+                                elif idx in self.editor.foldSelection.keys():
+                                    toUnFold.append(idx)
+                                    if idx in self.editor.FoldManager.regions.keys():
+                                        idx = self.editor.FoldManager.regions[idx].end_line + 1
+                                    else:
+                                        idx += 1
+                                else:
+                                    toUnFold.append(idx)
+                                    idx += 1
+
+                        blockNo = self.editor.FoldManager.regions[blockNo].end_line + 1
+
+                self.editor.unFold(blockNos = toUnFold)
+                print("Unfold =", [k + 1 for k in toUnFold])
+                self.editor.foldSelection.pop(self.onHandle, None)
+
+                print("fold selection =", [k + 1 for k in self.editor.foldSelection.keys()])
+                print("------------")
+
+            self.editor.HighLightLine()
+            self.editor.viewport().update()
+            self.update()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event : QMouseEvent):
         x = event.position().x()
         y = event.position().y()
         if self.width() - self.RightMargin < x < self.width():
-            lineNo = (y - 2) // self.cellHeight + self.editor.firstVisibleBlock().blockNumber()
-            print(lineNo)
+            cursor = self.editor.cursorForPosition(QPoint(int(x), int(y)))
+            lineNo = cursor.blockNumber()
             if lineNo in self.editor.FoldManager.regions.keys():
                 self.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.onHandle = lineNo
             else:
                 self.setCursor(Qt.CursorShape.ArrowCursor)
+                self.onHandle = None
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.onHandle = None
         super().mouseMoveEvent(event)
 
     def wheelEvent(self, event):
@@ -396,14 +498,17 @@ class LineNumberArea(QWidget):
         x = event.position().x()
         y = event.position().y()
         if self.width() - self.RightMargin < x < self.width():
-            lineNo = (y - 2) // self.cellHeight + self.editor.firstVisibleBlock().blockNumber()
-            print(lineNo)
+            cursor = self.editor.cursorForPosition(QPoint(int(x), int(y)))
+            lineNo = cursor.blockNumber()
             if lineNo in self.editor.FoldManager.regions.keys():
                 self.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.onHandle = lineNo
             else:
                 self.setCursor(Qt.CursorShape.ArrowCursor)
+                self.onHandle = None
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.onHandle = None
         super().wheelEvent(event)
 
     def enterEvent(self, event):
@@ -419,12 +524,16 @@ class LineNumberArea(QWidget):
 
 
 class FoldRegion:
-    def __init__(self, node):
+    def __init__(self, node, end_line = None):
+        self.fold = False
         self.type = node.type
         self.start_byte = node.start_byte
         self.end_byte = node.end_byte
         self.start_line = node.start_point[0]
-        self.end_line = node.end_point[0]
+
+        if end_line is None:
+            end_line = node.end_point[0]
+        self.end_line = end_line
 
     def __repr__(self):
         return (
@@ -437,13 +546,16 @@ class FoldRegion:
 
 class FoldManager:
 
-    def __init__(self, editor):
+    def __init__(self, editor : CodeEditor):
         self.editor = editor
-        self.regions = {}
+        self.version = 0
+        self.regions : dict[int, FoldRegion] = {}
 
-    def isFoldable(self, node):
+    def isFoldable(self, node, end_line = None):
+        if end_line is None:
+            end_line = node.end_point[0]
         # Must span more than one line
-        if node.start_point[0] >= node.end_point[0]:
+        if node.start_point[0] >= end_line:
             return False
 
         # Normal Python blocks
@@ -458,23 +570,83 @@ class FoldManager:
 
     def collectAll(self, tree):
         regions = {}
+        stack = [tree.root_node]
+        chunk_size = 1000
+        version = self.version
 
-        def visit(node):
-            if self.isFoldable(node):
-                regions.update({FoldRegion(node).start_line : FoldRegion(node)})
-            for child in node.children:
-                visit(child)
+        def process_chunk():
+            count = 0
 
-        visit(tree.root_node)
+            while stack and count < chunk_size:
+                if version != self.version:
+                    return
+                
+                node = stack.pop()
+                count += 1
+
+                if node.type == "if_statement":
+                    consequence = node.child_by_field_name("consequence")
+                    if consequence and self.isFoldable(node = node, end_line = consequence.end_point[0]):
+                        region = FoldRegion(
+                            node,
+                            end_line = consequence.end_point[0]
+                        )
+                        regions[region.start_line] = region
+
+                elif self.isFoldable(node):
+                    region = FoldRegion(node)
+                    regions[region.start_line] = region
+
+                # Push children in reverse to maintain left-to-right DFS traversal
+                for child in reversed(node.children):
+                    stack.append(child)
+
+            if stack:
+                QTimer.singleShot(0, process_chunk)
+            else:
+                print("DONE")
+        process_chunk()
         return regions
 
     def initialScan(self, tree):
         self.regions = self.collectAll(tree)
         self.debugPrint()
 
-    def update(self, oldTree, newTree, changed_ranges):
+    def update(self, newTree):
         self.regions = self.collectAll(newTree)
         self.debugPrint()
+
+    def applyEditOffset(self, start_line, old_line_count, new_line_count):
+        delta = new_line_count - old_line_count
+
+        if delta == 0:
+            return
+
+        edit_end = start_line + old_line_count
+        new_regions = {}
+
+        for region in self.regions.values():
+
+            # Region entirely AFTER the edited area
+            if region.start_line >= edit_end:
+                region.start_line += delta
+                region.end_line += delta
+
+            # Region contains the edit
+            elif region.start_line < start_line <= region.end_line:
+                region.end_line += delta
+
+            # Region starts inside the replaced/deleted area
+            elif start_line <= region.start_line < edit_end:
+                continue
+
+            # Region entirely before edit
+            # -> unchanged
+
+            if region.end_line > region.start_line:
+                new_regions[region.start_line] = region
+
+        self.regions = new_regions
 
     def debugPrint(self):
         print("\n===== FOLDABLE REGIONS =====")
@@ -495,6 +667,7 @@ class CodeEditor(QPlainTextEdit):
         self.LoadFile  = False
         self.Selection = CodeSelection()
         self.Context   = CodeContext(editor = self)
+        self.OldSelect = None
 
         # self.ChangeFlag = False
 
@@ -504,6 +677,7 @@ class CodeEditor(QPlainTextEdit):
         self.DelimiterID       = 0
 
         self.errSelections = []
+        self.foldSelection = {}
         self.errSquiggles  : list[Squiggle] = []
         self.warnSquiggles : list[Squiggle] = []
 
@@ -546,13 +720,19 @@ class CodeEditor(QPlainTextEdit):
         self.oldNode = self.Language.syntax.Tree.root_node
         self.newNode = self.Language.syntax.Tree.root_node
 
-        self.FoldManager = FoldManager(self)
-        self.LineWidget  = LineNumberArea(self.parent(), self, self.Font)
+        self.foldUpdateFlag = False
+        self.FoldManager    = FoldManager(self)
+        self.foldColor      = QColor(46, 82, 98)
+
+        self.LineWidget = LineNumberArea(self.parent(), self, self.Font)
 
         self.highlightVersion = 0
         self.pendingBlocks    = set()
         self.highlightTimer   = QTimer()
         self.highlightTimer.setSingleShot(True)
+
+        self.foldTimer = QTimer()
+        self.foldTimer.setSingleShot(True)
 
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -574,7 +754,6 @@ class CodeEditor(QPlainTextEdit):
 
         self._blink_reset_timer = QTimer(self)
         self._blink_reset_timer.setSingleShot(True)
-        self._blink_reset_timer.timeout.connect(self._restore_blinking)
 
         blockdata = BlockBracketData()
         self.firstVisibleBlock().setUserData(blockdata)
@@ -614,15 +793,16 @@ class CodeEditor(QPlainTextEdit):
         painter.setPen(QPen(QColor(229, 229, 16), 1.5))
         for squiggle in self.warnSquiggles: self.drawSquiggle(painter, squiggle)
 
+
         base_x = self.document().documentMargin() + self.contentOffset().x()
         active_pos = None
         min_block_num = -1
         max_block_num = -1
-        
+
         cursor_block = self.textCursor().block()
         c_text = cursor_block.text()
-        
-        # If cursor is on an empty line, look upwards to inherit its scope context
+
+        # Inherit context upwards if cursor is on an empty line
         temp_block = cursor_block
         while not c_text.strip() and temp_block.isValid():
             temp_block = temp_block.previous()
@@ -631,39 +811,39 @@ class CodeEditor(QPlainTextEdit):
 
         c_ls = len(c_text) - len(c_text.lstrip(' '))
         c_levels = list(range(0, c_ls, 4))
-        
+
         if c_levels:
-            active_pos = c_levels[-1] # The deepest valid guide for the current block
-            
-            # Scan upwards to find where this indentation scope starts
+            active_pos = c_levels[-1]
+
+            # Scan upwards for scope start
             b = temp_block
             start_block = b
             while b.isValid():
                 t = b.text()
-                if t.strip():
-                    if (len(t) - len(t.lstrip(' '))) <= active_pos:
-                        break
+                if t.strip() and (len(t) - len(t.lstrip(' '))) <= active_pos:
+                    break
                 start_block = b
                 b = b.previous()
-                
-            # Scan downwards to find where this indentation scope ends
+
+            # Scan downwards for scope end
             b = temp_block
             end_block = b
             while b.isValid():
                 t = b.text()
-                if t.strip():
-                    if (len(t) - len(t.lstrip(' '))) <= active_pos:
-                        break
+                if t.strip() and (len(t) - len(t.lstrip(' '))) <= active_pos:
+                    break
                 end_block = b
                 b = b.next()
-                
+
             min_block_num = start_block.blockNumber()
             max_block_num = end_block.blockNumber()
 
-        # --- STEP 2: DRAW THE GUIDES ---
+        # --- STEP 1: COLLECT VISIBLE BLOCKS & INDENTS ---
         viewport_rect = self.viewport().rect()
-        block = self.firstVisibleBlock()
         content_offset = self.contentOffset()
+        block = self.firstVisibleBlock()
+
+        visible_lines = []  # List of tuples: (block_num, top, bottom, levels)
 
         while block.isValid():
             geom = self.blockBoundingGeometry(block).translated(content_offset)
@@ -676,51 +856,70 @@ class CodeEditor(QPlainTextEdit):
             if bottom >= 0 and block.isVisible():
                 text = block.text()
                 
-                # VS Code trick: Bridge empty lines so the vertical lines don't break
                 if not text.strip():
-                    # Find indent of previous valid line
+                    # Bridge empty line: find previous & next non-empty lines
                     pb = block.previous()
-                    while pb.isValid() and not pb.text().strip(): pb = pb.previous()
+                    while pb.isValid() and not pb.text().strip():
+                        pb = pb.previous()
                     p_ls = len(pb.text()) - len(pb.text().lstrip(' ')) if pb.isValid() else 0
-                    
-                    # Find indent of next valid line
+
                     nb = block.next()
-                    while nb.isValid() and not nb.text().strip(): nb = nb.next()
+                    while nb.isValid() and not nb.text().strip():
+                        nb = nb.next()
                     n_ls = len(nb.text()) - len(nb.text().lstrip(' ')) if nb.isValid() else 0
-                    
+
                     leading_spaces = min(p_ls, n_ls)
                 else:
                     leading_spaces = len(text) - len(text.lstrip(' '))
 
-                levels = list(range(0, leading_spaces, 4))
-                
-                for pos in levels:
-                    x = base_x + (pos * self.cellWidth) + 2
-                    # If this vertical line is the active scope AND this block falls within the contiguous scope boundaries
-                    is_active_scope_line = (pos == active_pos) and (min_block_num <= block.blockNumber() <= max_block_num)
-
-                    if is_active_scope_line:
-                        painter.setPen(QColor(255, 255, 255, 255))  # Bright white for active scope
-                    else:
-                        painter.setPen(QColor(255, 255, 255, 50))   # Dim white for background scopes
-
-                    painter.drawLine(x, int(top), x, int(bottom))
+                levels = set(range(0, leading_spaces, 4))
+                visible_lines.append((block.blockNumber(), top, bottom, levels))
 
             block = block.next()
 
-        # layout = self.document().documentLayout()
-        # ctx = QAbstractTextDocumentLayout.PaintContext()
-        # ctx.palette = self.palette()
-        # ctx.clip = QRectF(e.rect())
+        if not visible_lines:
+            return
 
-        # painter.setClipRect(e.rect())
+        # --- STEP 2: BUILD CONTINUOUS VERTICAL SEGMENTS ---
+        # Map: pos -> list of dicts: [{'top': y1, 'bottom': y2, 'active': bool}]
+        segments_by_pos = {}
+        all_positions = sorted({pos for item in visible_lines for pos in item[3]})
 
-        # # Move document into the viewport.
-        # painter.translate(
-        #     self.contentOffset()
-        # )
+        for pos in all_positions:
+            segments_by_pos[pos] = []
+            current_segment = None
 
-        # layout.draw(painter, ctx)
+            for b_num, top, bottom, levels in visible_lines:
+                if pos in levels:
+                    is_active = (pos == active_pos) and (min_block_num <= b_num <= max_block_num)
+
+                    if current_segment is None:
+                        current_segment = {'top': top, 'bottom': bottom, 'active': is_active}
+                    else:
+                        # Continue line if active state matches and blocks touch
+                        if current_segment['active'] == is_active and abs(current_segment['bottom'] - top) <= 1.0:
+                            current_segment['bottom'] = bottom
+                        else:
+                            segments_by_pos[pos].append(current_segment)
+                            current_segment = {'top': top, 'bottom': bottom, 'active': is_active}
+                else:
+                    if current_segment is not None:
+                        segments_by_pos[pos].append(current_segment)
+                        current_segment = None
+
+            if current_segment is not None:
+                segments_by_pos[pos].append(current_segment)
+
+        # --- STEP 3: DRAW MERGED CONTINUOUS LINES ---
+        pen_active = QColor(255, 255, 255, 150)
+        pen_dim = QColor(255, 255, 255, 50)
+
+        for pos, seg_list in segments_by_pos.items():
+            x = (base_x + (pos * self.cellWidth) - 1) if pos == 0 else (base_x + (pos * self.cellWidth) + 2)
+
+            for seg in seg_list:
+                painter.setPen(pen_active if seg['active'] else pen_dim)
+                painter.drawLine(int(x), int(seg['top']), int(x), int(seg['bottom']))
 
         painter.end()
         super().paintEvent(e)
@@ -800,7 +999,7 @@ class CodeEditor(QPlainTextEdit):
 
     def HighLightLine(self):
         if self.textCursor().hasSelection():
-            self.setExtraSelections(self.errSelections)
+            self.setExtraSelections(self.errSelections + list(self.foldSelection.values()))
             return
         
         line_color = QColor(255, 255, 255, 15)
@@ -811,7 +1010,7 @@ class CodeEditor(QPlainTextEdit):
 
         selection.cursor = self.textCursor()
         selection.cursor.clearSelection()
-        self.setExtraSelections([selection] + self.errSelections)
+        self.setExtraSelections([selection] + self.errSelections + list(self.foldSelection.values()))
         # self.setExtraSelections(self.errSelections)
 
     def BlockIndent(self):
@@ -889,6 +1088,26 @@ class CodeEditor(QPlainTextEdit):
                     break
             else:
                 break
+
+    def fold(self, blockNos : list, update = False):
+        doc = self.document()
+        for idx in blockNos:
+            block = doc.findBlockByNumber(idx)
+            block.setVisible(False)
+            doc.markContentsDirty(block.position(), block.length())
+
+        if update:
+            self.viewport().update()
+    
+    def unFold(self, blockNos : list, update = False):
+        doc = self.document()
+        for idx in blockNos:
+            block = doc.findBlockByNumber(idx)
+            block.setVisible(True)
+            doc.markContentsDirty(block.position(), block.length())
+
+        if update:
+            self.viewport().update()
 
     def bracketInput(self, ch: str):
         cursor = self.textCursor()
@@ -1133,7 +1352,7 @@ class CodeEditor(QPlainTextEdit):
     def incrementCapture(self, position, charRem, charAdd):
         if self.LoadFile:
             return        
-        
+
         self.oldTree = self.Language.syntax.Tree.copy()
         newText = self.document().toPlainText()
 
@@ -1170,12 +1389,6 @@ class CodeEditor(QPlainTextEdit):
         self.newTree = self.Language.syntax.Tree
         changed_ranges = self.oldTree.changed_ranges(self.newTree)
 
-        self.FoldManager.update(
-            self.oldTree,
-            self.newTree,
-            changed_ranges
-        )
-
         affectedBlocks = set()
 
         for row in range(oldStartRow, newEndRow + 1):
@@ -1188,6 +1401,9 @@ class CodeEditor(QPlainTextEdit):
         self.pendingBlocks.update(affectedBlocks)
         self.highlightVersion += 1
         self.highlightTimer.start(100)
+
+        self.FoldManager.version += 1
+        self.foldTimer.start(400)
 
         self.OldText = newText
 
@@ -1693,7 +1909,9 @@ class CodeEditor(QPlainTextEdit):
         self.floating_vbar.rangeChanged      .connect(self.updateFloatingScrollBars)
         self.floating_hbar.rangeChanged      .connect(self.updateFloatingScrollBars)
         self.floating_hbar.valueChanged      .connect(lambda: self.viewport().update())
+        self._blink_reset_timer.timeout      .connect(self._restore_blinking)
         self.highlightTimer.timeout          .connect(self.executeHighlight)
+        self.highlightTimer.timeout          .connect(lambda: self.FoldManager.update(self.newTree))
 
     def StyleConfig(self):
         self.setStyleSheet(
@@ -1706,58 +1924,182 @@ class CodeEditor(QPlainTextEdit):
             """
         )
 
+    def applyFoldEditOffset(self, start_line, old_line_count, new_line_count):
+        """
+        Shift both FoldManager.regions and foldSelection
+        according to a text edit.
+        """
+
+        self.FoldManager.applyEditOffset(
+            start_line,
+            old_line_count,
+            new_line_count
+        )
+
+        delta = new_line_count - old_line_count
+
+        if delta == 0:
+            return
+
+        edit_end = start_line + old_line_count
+
+        new_selection = {}
+
+        for line, selection in self.foldSelection.items():
+
+            if line >= edit_end:
+                new_line = line + delta
+
+            elif start_line <= line < edit_end:
+                # This fold header was inside deleted/replaced text.
+                continue
+
+            else:
+                new_line = line
+
+            # The QTextCursor inside ExtraSelection is position based,
+            # so recreate it against the new block.
+            block = self.document().findBlockByNumber(new_line)
+
+            if not block.isValid():
+                continue
+
+            selection.cursor = QTextCursor(block)
+            new_selection[new_line] = selection
+
+        self.foldSelection = new_selection
+
     def keyPressEvent(self, e):
         cursor = self.textCursor()
         ch = e.text()
+        doc = self.document()
 
         app = QApplication.instance()
         app.setCursorFlashTime(0)
 
         # if ch not in {'', '\t'}:
-        #     if cursor.hasSelection():
-        #         selectStartAt = self.Selection.FirstBlock.blockNumber()
-        #         selectEndAt   = self.Selection.LastBlock.blockNumber()
-        #         cursorAt      = selectStartAt
+            # if cursor.hasSelection():
+            #     selectStartAt = self.Selection.FirstBlock.blockNumber()
+            #     selectEndAt   = self.Selection.LastBlock.blockNumber()
+            #     cursorAt      = selectStartAt
 
-        #         del self.blockBracketStack[selectStartAt + 1 : selectEndAt + 1]
-        #         del self.bracketMap[selectStartAt + 1 : selectEndAt + 1]
+            #     del self.blockBracketStack[selectStartAt + 1 : selectEndAt + 1]
+            #     del self.bracketMap[selectStartAt + 1 : selectEndAt + 1]
 
-        #         if ch == '\r':
-        #             self.blockBracketStack.insert((cursorAt + 1), [])
-        #             self.bracketMap.insert((cursorAt + 1), {})
+            #     if ch == '\r':
+            #         self.blockBracketStack.insert((cursorAt + 1), [])
+            #         self.bracketMap.insert((cursorAt + 1), {})
 
-        #         elif ch == '\x16':
-        #             pastedText = QGuiApplication.clipboard().text()
-        #             linestoAdd = pastedText.count('\n')
+            #     elif ch == '\x16':
+            #         pastedText = QGuiApplication.clipboard().text()
+            #         linestoAdd = pastedText.count('\n')
 
-        #             for _ in range(linestoAdd):
-        #                 self.blockBracketStack.insert((cursorAt + 1), [])
-        #                 self.bracketMap.insert((cursorAt + 1), {})
+            #         for _ in range(linestoAdd):
+            #             self.blockBracketStack.insert((cursorAt + 1), [])
+            #             self.bracketMap.insert((cursorAt + 1), {})
 
-        #     else:
-        #         if ch == '\r':
-        #             self.blockBracketStack.insert((cursorAt + 1), [])
-        #             self.bracketMap.insert((cursorAt + 1), {})
+            # else:
+            #     if ch == '\r':
+            #         self.blockBracketStack.insert((cursorAt + 1), [])
+            #         self.bracketMap.insert((cursorAt + 1), {})
 
-        #         elif ch == '\x08' and cursor.position() != 0 and cursor.atBlockStart():
-        #             self.blockBracketStack.pop(cursorAt)
-        #             self.bracketMap.pop(cursorAt)
+            #     elif ch == '\x08' and cursor.position() != 0 and cursor.atBlockStart():
+            #         self.blockBracketStack.pop(cursorAt)
+            #         self.bracketMap.pop(cursorAt)
 
-        #         elif ch == '\x7f' and (self.document().blockCount() > (cursorAt + 1)) and cursor.atBlockEnd():
-        #             self.blockBracketStack.pop(cursorAt + 1)
-        #             self.bracketMap.pop(cursorAt + 1)
+            #     elif ch == '\x7f' and (self.document().blockCount() > (cursorAt + 1)) and cursor.atBlockEnd():
+            #         self.blockBracketStack.pop(cursorAt + 1)
+            #         self.bracketMap.pop(cursorAt + 1)
 
-        #         elif ch == '\x16':
-        #             pastedText = QGuiApplication.clipboard().text()
-        #             linestoAdd = pastedText.count("\n")
+            #     elif ch == '\x16':
+            #         pastedText = QGuiApplication.clipboard().text()
+            #         linestoAdd = pastedText.count("\n")
 
-        #             for _ in range(linestoAdd):
-        #                 self.blockBracketStack.insert((cursorAt + 1), [])
-        #                 self.bracketMap.insert((cursorAt + 1), {})
+            #         for _ in range(linestoAdd):
+            #             self.blockBracketStack.insert((cursorAt + 1), [])
+            #             self.bracketMap.insert((cursorAt + 1), {})
+
+        if e.matches(QKeySequence.StandardKey.Cut):
+            cursor = self.textCursor()
+
+            if cursor.hasSelection():
+                start = cursor.selectionStart()
+                end   = cursor.selectionEnd()
+
+                start_block = self.document().findBlock(start)
+                end_block   = self.document().findBlock(end)
+
+                start_line = start_block.blockNumber()
+                end_line   = end_block.blockNumber()
+
+                old_line_count = end_line - start_line
+                self.applyFoldEditOffset(
+                    start_line,
+                    old_line_count,
+                    0
+                )
+
+        if e.matches(QKeySequence.StandardKey.Paste):
+
+            cursor = self.textCursor()
+            pastedText = QGuiApplication.clipboard().text()
+
+            new_line_count = pastedText.count("\n")
+
+            if cursor.hasSelection():
+                start = cursor.selectionStart()
+                end   = cursor.selectionEnd()
+
+                start_block = self.document().findBlock(start)
+                end_block   = self.document().findBlock(end)
+
+                start_line = start_block.blockNumber()
+                end_line   = end_block.blockNumber()
+
+                old_line_count = end_line - start_line
+
+                self.applyFoldEditOffset(
+                    start_line,
+                    old_line_count,
+                    new_line_count
+                )
+            else:
+                start_line = cursor.blockNumber()
+                self.applyFoldEditOffset(
+                    start_line,
+                    0,
+                    new_line_count
+                )
 
         if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            print("Delimiter Context =", self.Context.delimiter.stack)
-            print("Node Type =", self.fetchCursorNode().type)
+            toAdd = 1
+            toRem = 0
+
+            if self.textCursor().hasSelection():
+                startPos = self.textCursor().selectionStart()
+                endPos = self.textCursor().selectionEnd()
+
+                startBlockNo = doc.findBlock(startPos).blockNumber()
+                endBlockNo = doc.findBlock(endPos).blockNumber()
+                toRem = endBlockNo - startBlockNo
+
+            else:
+                startBlockNo = self.textCursor().blockNumber()
+                endBlockNo = self.textCursor().blockNumber()
+
+            tempFoldDict = {}
+            for startLine, selection in self.foldSelection.items():
+                if startLine > endBlockNo:
+                    tempFoldDict.update({(startLine + toAdd - toRem) : selection})
+                elif startBlockNo <= startLine < endBlockNo:
+                    continue
+                elif startLine == endBlockNo:
+                    toUnFold = range(self.FoldManager.regions[startLine].start_line, self.FoldManager.regions[startLine].end_line + 1)
+                    self.unFold(blockNos = toUnFold, update = True)
+                else:
+                    tempFoldDict.update({startLine : selection})
+
+            self.foldSelection = copy.copy(tempFoldDict)
 
             text        = self.textCursor().block().text()
             match       = re.match(r"^[ \t]*", text)
@@ -1799,6 +2141,7 @@ class CodeEditor(QPlainTextEdit):
             elif nextIndent == LineIndent.Dedent: self.unIndent(cursor.block())
 
             self._blink_reset_timer.start(50)
+
             return
 
         if e.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_Right, Qt.Key.Key_Left):
@@ -1824,10 +2167,64 @@ class CodeEditor(QPlainTextEdit):
                 return
 
         elif e.key() == Qt.Key_Backspace:
-            self.highlightDelay = 300
             cursor = self.textCursor()
+            block = cursor.block()
             pos = cursor.position()
             ch = self.document().characterAt(pos - 1)
+
+            toAdd = 0
+            toRem = 0
+
+            if cursor.hasSelection():
+                startPos = self.textCursor().selectionStart()
+                endPos = self.textCursor().selectionEnd()
+
+                startBlockNo = doc.findBlock(startPos).blockNumber()
+                endBlockNo = doc.findBlock(endPos).blockNumber()
+
+                toRem = endBlockNo - startBlockNo
+
+            elif cursor.atBlockStart():
+                startBlockNo = cursor.blockNumber()
+                endBlockNo = cursor.blockNumber()
+
+                toRem = 1
+
+            if cursor.hasSelection() or cursor.atBlockStart():
+                tempFoldDict = {}
+                for startLine, selection in self.foldSelection.items():
+                    if startLine >= endBlockNo:
+                        tempFoldDict.update({(startLine + toAdd - toRem) : selection})
+                    elif startBlockNo <= startLine < endBlockNo:
+                        continue
+                    else:
+                        if (not cursor.hasSelection()) and block.previous().isValid() and (not block.previous().isVisible()):
+                            data = self.FoldManager.regions[startLine]
+                            if data.end_line == block.previous().blockNumber():
+                                toUnFold = []
+                                idx = startLine
+                                while True:
+                                    if idx > data.end_line:
+                                        break
+                                    elif (idx in self.FoldManager.regions.keys()) and (idx in self.foldSelection.keys()):
+                                        subdata = self.FoldManager.regions[idx]
+                                        toUnFold.append(idx)
+                                        if subdata.end_line == block.previous().blockNumber():
+                                            idx += 1
+                                        else:
+                                            idx = subdata.end_line + 1
+                                    else:
+                                        toUnFold.append(idx)
+                                        idx += 1
+                                self.unFold(blockNos = toUnFold)
+                            else:
+                                tempFoldDict.update({startLine : selection})
+                            self.viewport().update()
+                        else:
+                            tempFoldDict.update({startLine : selection})
+
+                self.foldSelection = copy.copy(tempFoldDict)
+
             if pos > 0 and ch in PAIR_BRACE:
                 self.removeBracket(ch, pos)
                 self._blink_reset_timer.start(50)
@@ -1869,7 +2266,7 @@ class CodeEditor(QPlainTextEdit):
         if e.button() == Qt.RightButton:
             self.Language.syntax.printSyntax()
         node = self.fetchCursorNode(position = self.textCursor().position())
-        self.Language.syntax.printSyntax(node = node)
+        # self.Language.syntax.printSyntax(node = node)
         # print(self.document().characterCount())
 
     def resizeEvent(self, e):
@@ -1972,7 +2369,7 @@ class CodeEditor(QPlainTextEdit):
     def _on_hbar_fade_finished(self):
         if self.hbar_effect.opacity() == 0.0:
             self.floating_hbar.hide()
-        
+
     def styleConfig(self, widget : QScrollBar):
         orientation = "vertical" if widget.orientation() == Qt.Orientation.Vertical else "horizontal"
         dimension = "width: 8px;" if orientation == "vertical" else "height: 8px;"
@@ -2612,29 +3009,29 @@ class MasterEditor(QWidget):
         Layout.addWidget(self.editor)
 
 
-# class  MainWindow(QMainWindow):
-#     def __init__(self, parent = None):
-#         super().__init__(parent)
-#         Main = MasterEditor(self)
-#         self.setWindowTitle("anNaylam")
-#         self.setCentralWidget(Main)
+class  MainWindow(QMainWindow):
+    def __init__(self, parent = None):
+        super().__init__(parent)
+        Main = MasterEditor(self)
+        self.setWindowTitle("anNaylam")
+        self.setCentralWidget(Main)
 
 
-# app = QApplication([])
-# window = MainWindow()
+app = QApplication([])
+window = MainWindow()
 
-# window.show()
+window.show()
 
-# screen = app.primaryScreen()
-# avail = screen.availableGeometry()
+screen = app.primaryScreen()
+avail = screen.availableGeometry()
 
-# title_bar_height = window.frameGeometry().height() - window.geometry().height()
-# border_width = window.frameGeometry().width() - window.geometry().width()
+title_bar_height = window.frameGeometry().height() - window.geometry().height()
+border_width = window.frameGeometry().width() - window.geometry().width()
 
-# target_width = (avail.width() // 2) - border_width
-# target_height = avail.height() - title_bar_height
+target_width = (avail.width() // 2) - border_width
+target_height = avail.height() - title_bar_height
 
-# window.resize(target_width, target_height)
-# window.move(avail.x() + (avail.width() // 2), avail.y())
+window.resize(target_width, target_height)
+window.move(avail.x() + (avail.width() // 2), avail.y())
 
-# sys.exit(app.exec())
+sys.exit(app.exec())

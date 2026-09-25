@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QFrame, QHBoxLayout,
 from PySide6.QtGui import (QShortcut, QKeySequence, QAction, QKeyEvent,
     QFont, QPalette)
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import (QUrl, Qt)
 
 from pathlib import Path
 from anNaylam import *
