@@ -439,24 +439,19 @@ class LineNumberArea(QWidget):
                         break
 
                     elif blockNo not in self.editor.FoldManager.regions.keys():
-                        print("elif ->", blockNo + 1)
                         toUnFold.append(blockNo)
                         blockNo += 1
 
                     else:
-                        print("else ->", blockNo + 1)
                         toUnFold.append(blockNo)
                         if blockNo not in self.editor.foldSelection.keys():
                             idx = blockNo + 1
                             while True:
                                 if idx > self.editor.FoldManager.regions[blockNo].end_line:
                                     break
-                                elif idx in self.editor.foldSelection.keys():
+                                elif idx in self.editor.foldSelection.keys() and idx in self.editor.FoldManager.regions.keys():
                                     toUnFold.append(idx)
-                                    if idx in self.editor.FoldManager.regions.keys():
-                                        idx = self.editor.FoldManager.regions[idx].end_line + 1
-                                    else:
-                                        idx += 1
+                                    idx = self.editor.FoldManager.regions[idx].end_line + 1
                                 else:
                                     toUnFold.append(idx)
                                     idx += 1
@@ -464,11 +459,7 @@ class LineNumberArea(QWidget):
                         blockNo = self.editor.FoldManager.regions[blockNo].end_line + 1
 
                 self.editor.unFold(blockNos = toUnFold)
-                print("Unfold =", [k + 1 for k in toUnFold])
                 self.editor.foldSelection.pop(self.onHandle, None)
-
-                print("fold selection =", [k + 1 for k in self.editor.foldSelection.keys()])
-                print("------------")
 
             self.editor.HighLightLine()
             self.editor.viewport().update()
@@ -2021,55 +2012,74 @@ class CodeEditor(QPlainTextEdit):
 
         if e.matches(QKeySequence.StandardKey.Cut):
             cursor = self.textCursor()
-
+            toAdd = 0
+            toRem = 0
             if cursor.hasSelection():
                 start = cursor.selectionStart()
                 end   = cursor.selectionEnd()
 
-                start_block = self.document().findBlock(start)
-                end_block   = self.document().findBlock(end)
+                startBlockNo = self.document().findBlock(start).blockNumber()
+                endBlockNo   = self.document().findBlock(end).blockNumber()
 
-                start_line = start_block.blockNumber()
-                end_line   = end_block.blockNumber()
+                toRem = endBlockNo - startBlockNo
 
-                old_line_count = end_line - start_line
-                self.applyFoldEditOffset(
-                    start_line,
-                    old_line_count,
-                    0
-                )
+                tempFoldDict = {}
+                for startLine, selection in self.foldSelection.items():
+                    if startLine >= endBlockNo:
+                        tempFoldDict.update({(startLine + toAdd - toRem) : selection})
+                    elif startBlockNo <= startLine < endBlockNo:
+                        continue
+                    else:
+                        tempFoldDict.update({startLine : selection})
+                    
+                self.foldSelection = copy.copy(tempFoldDict)
 
         if e.matches(QKeySequence.StandardKey.Paste):
-
             cursor = self.textCursor()
             pastedText = QGuiApplication.clipboard().text()
 
-            new_line_count = pastedText.count("\n")
+            toAdd = pastedText.count("\n")
+            toRem = 0
 
             if cursor.hasSelection():
                 start = cursor.selectionStart()
                 end   = cursor.selectionEnd()
 
-                start_block = self.document().findBlock(start)
-                end_block   = self.document().findBlock(end)
+                startBlockNo = self.document().findBlock(start).blockNumber()
+                endBlockNo   = self.document().findBlock(end).blockNumber()
 
-                start_line = start_block.blockNumber()
-                end_line   = end_block.blockNumber()
+                toRem = endBlockNo - startBlockNo
 
-                old_line_count = end_line - start_line
-
-                self.applyFoldEditOffset(
-                    start_line,
-                    old_line_count,
-                    new_line_count
-                )
             else:
-                start_line = cursor.blockNumber()
-                self.applyFoldEditOffset(
-                    start_line,
-                    0,
-                    new_line_count
-                )
+                startBlockNo = cursor.blockNumber()
+                endBlockNo   = cursor.blockNumber()
+
+            tempFoldDict = {}
+            for startLine, selection in self.foldSelection.items():
+                if startLine > endBlockNo:
+                    tempFoldDict.update({(startLine + toAdd - toRem) : selection})
+                elif startBlockNo <= startLine < endBlockNo:
+                    continue
+                elif startLine == endBlockNo:
+                    toUnFold = []
+                    startIdx = startLine + 1
+                    endIdx   = self.FoldManager.regions[startLine].end_line
+                    idx = startIdx
+                    while True:
+                        if idx > endIdx:
+                            break
+                        elif idx in self.foldSelection.keys() and idx in self.FoldManager.regions.keys():
+                            toUnFold.append(idx)
+                            idx = self.FoldManager.regions[idx].end_line + 1
+                        else:
+                            toUnFold.append(idx)
+                            idx += 1
+                    self.unFold(blockNos = toUnFold, update = True)
+                else:
+                    tempFoldDict.update({startLine : selection})
+
+            self.foldSelection = copy.copy(tempFoldDict)
+
 
         if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             toAdd = 1
@@ -2094,7 +2104,19 @@ class CodeEditor(QPlainTextEdit):
                 elif startBlockNo <= startLine < endBlockNo:
                     continue
                 elif startLine == endBlockNo:
-                    toUnFold = range(self.FoldManager.regions[startLine].start_line, self.FoldManager.regions[startLine].end_line + 1)
+                    toUnFold = []
+                    startIdx = startLine + 1
+                    endIdx   = self.FoldManager.regions[startLine].end_line
+                    idx = startIdx
+                    while True:
+                        if idx > endIdx:
+                            break
+                        elif idx in self.foldSelection.keys() and idx in self.FoldManager.regions.keys():
+                            toUnFold.append(idx)
+                            idx = self.FoldManager.regions[idx].end_line + 1
+                        else:
+                            toUnFold.append(idx)
+                            idx += 1
                     self.unFold(blockNos = toUnFold, update = True)
                 else:
                     tempFoldDict.update({startLine : selection})
