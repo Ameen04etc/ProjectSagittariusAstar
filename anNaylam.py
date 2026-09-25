@@ -607,38 +607,6 @@ class FoldManager:
         self.regions = self.collectAll(newTree)
         self.debugPrint()
 
-    def applyEditOffset(self, start_line, old_line_count, new_line_count):
-        delta = new_line_count - old_line_count
-
-        if delta == 0:
-            return
-
-        edit_end = start_line + old_line_count
-        new_regions = {}
-
-        for region in self.regions.values():
-
-            # Region entirely AFTER the edited area
-            if region.start_line >= edit_end:
-                region.start_line += delta
-                region.end_line += delta
-
-            # Region contains the edit
-            elif region.start_line < start_line <= region.end_line:
-                region.end_line += delta
-
-            # Region starts inside the replaced/deleted area
-            elif start_line <= region.start_line < edit_end:
-                continue
-
-            # Region entirely before edit
-            # -> unchanged
-
-            if region.end_line > region.start_line:
-                new_regions[region.start_line] = region
-
-        self.regions = new_regions
-
     def debugPrint(self):
         print("\n===== FOLDABLE REGIONS =====")
         for region in self.regions:
@@ -1915,51 +1883,6 @@ class CodeEditor(QPlainTextEdit):
             """
         )
 
-    def applyFoldEditOffset(self, start_line, old_line_count, new_line_count):
-        """
-        Shift both FoldManager.regions and foldSelection
-        according to a text edit.
-        """
-
-        self.FoldManager.applyEditOffset(
-            start_line,
-            old_line_count,
-            new_line_count
-        )
-
-        delta = new_line_count - old_line_count
-
-        if delta == 0:
-            return
-
-        edit_end = start_line + old_line_count
-
-        new_selection = {}
-
-        for line, selection in self.foldSelection.items():
-
-            if line >= edit_end:
-                new_line = line + delta
-
-            elif start_line <= line < edit_end:
-                # This fold header was inside deleted/replaced text.
-                continue
-
-            else:
-                new_line = line
-
-            # The QTextCursor inside ExtraSelection is position based,
-            # so recreate it against the new block.
-            block = self.document().findBlockByNumber(new_line)
-
-            if not block.isValid():
-                continue
-
-            selection.cursor = QTextCursor(block)
-            new_selection[new_line] = selection
-
-        self.foldSelection = new_selection
-
     def keyPressEvent(self, e):
         cursor = self.textCursor()
         ch = e.text()
@@ -2079,7 +2002,6 @@ class CodeEditor(QPlainTextEdit):
                     tempFoldDict.update({startLine : selection})
 
             self.foldSelection = copy.copy(tempFoldDict)
-
 
         if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             toAdd = 1
@@ -2205,13 +2127,11 @@ class CodeEditor(QPlainTextEdit):
                 endBlockNo = doc.findBlock(endPos).blockNumber()
 
                 toRem = endBlockNo - startBlockNo
-
             elif cursor.atBlockStart():
                 startBlockNo = cursor.blockNumber()
                 endBlockNo = cursor.blockNumber()
 
                 toRem = 1
-
             if cursor.hasSelection() or cursor.atBlockStart():
                 tempFoldDict = {}
                 for startLine, selection in self.foldSelection.items():
@@ -3039,21 +2959,21 @@ class  MainWindow(QMainWindow):
         self.setCentralWidget(Main)
 
 
-app = QApplication([])
-window = MainWindow()
+# app = QApplication([])
+# window = MainWindow()
 
-window.show()
+# window.show()
 
-screen = app.primaryScreen()
-avail = screen.availableGeometry()
+# screen = app.primaryScreen()
+# avail = screen.availableGeometry()
 
-title_bar_height = window.frameGeometry().height() - window.geometry().height()
-border_width = window.frameGeometry().width() - window.geometry().width()
+# title_bar_height = window.frameGeometry().height() - window.geometry().height()
+# border_width = window.frameGeometry().width() - window.geometry().width()
 
-target_width = (avail.width() // 2) - border_width
-target_height = avail.height() - title_bar_height
+# target_width = (avail.width() // 2) - border_width
+# target_height = avail.height() - title_bar_height
 
-window.resize(target_width, target_height)
-window.move(avail.x() + (avail.width() // 2), avail.y())
+# window.resize(target_width, target_height)
+# window.move(avail.x() + (avail.width() // 2), avail.y())
 
-sys.exit(app.exec())
+# sys.exit(app.exec())
