@@ -2743,7 +2743,7 @@ class readBuffer:
 
 
 class LSPClient(QObject):
-    diagnosticsReady = Signal(object, object, object)
+    diagnosticsReady = Signal(str, object, list)    # uri, version, diagnostics
 
     def __init__(self, parent = None):
         super().__init__(parent)
@@ -2770,7 +2770,6 @@ class LSPClient(QObject):
                 },
                 "rootUri"       : None,
                 "capabilities"  : {}
-
             }
         }
         self.sendMessage(initialize)
@@ -2790,13 +2789,10 @@ class LSPClient(QObject):
         )
 
         started = self.process.waitForStarted()
-        print(f"{BLUE}waiting{RESET}")
 
         if not started:
             print("Failed to start language server")
             return
-
-        print("Language server started")
 
     def sendMessage(self, message):
         body = json.dumps(message).encode("utf-8")
