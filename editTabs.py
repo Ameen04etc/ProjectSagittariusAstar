@@ -28,6 +28,7 @@ class editTabs(QTabWidget):
         # self.palette().setColor(QPalette.ColorRole.Window, QColor("#FE0000"))
 
         self.unTitledTabs = []
+        self.lspManager   = LSPManager(self)
 
         self.shortCutConfig()
         self.styleConfig()
@@ -41,10 +42,23 @@ class editTabs(QTabWidget):
 
         self.newTab()
 
+    def routeDiagnostics(self, uri : str, version : int, diagnostics : list):
+        for index in range(self.count()):
+            editor = self.widget(index).findChild(MasterEditor)
+            if editor and editor.editor.documentURI == uri:
+                editor.editor.diagnose(uri = uri, version = version, diagnostics = diagnostics)
+
     def closeTab(self, index):
-        if index is None: index = self.currentIndex()
+        if index is None:
+            index = self.currentIndex()
+
         title = self.tabText(index)
         lead  = title.rsplit("-", 1)[0]
+        editor = self.currentWidget().findChild(MasterEditor)
+
+        if editor and editor.editor.FilePath and editor.editor.lspClient:
+            editor.editor.lspClient.didCloseMessage(editor.editor.FilePath)
+
         if lead == "Untitled":
             match = re.search(r"\d+$", title.strip())
             if match:
@@ -61,7 +75,7 @@ class editTabs(QTabWidget):
             name = f"Untitled-{self.unTitledTabs[-1]}"
 
         tab = QWidget()
-        codeEdit = MasterEditor(parent = tab)
+        codeEdit = MasterEditor(parent = tab, lspManager = self.lspManager)
 
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -113,6 +127,11 @@ class editTabs(QTabWidget):
             )
 
             if filePath:
+                if editor.editor.lspOpened and editor.editor.lspClient:
+                    editor.editor.lspClient.didCloseMessage(editor.editor.documentURI)
+                    editor.editor.lspOpened = False
+                    editor.editor.lspClient = None
+
                 with open(filePath, "w", encoding = "utf-8") as f:
                     f.write(editor.editor.toPlainText())
                 editor.editor.FilePath = Path(filePath).as_uri()
@@ -126,6 +145,7 @@ class editTabs(QTabWidget):
                         self.unTitledTabs.remove(int(match.group()))
 
                 self.setTabText(self.currentIndex(), fileName)
+                editor.editor.LSPSync()
 
             else:
                 pass
@@ -135,12 +155,13 @@ class editTabs(QTabWidget):
                 f.write(editor.editor.toPlainText())
 
     def signalManager(self):
-        self.tabCloseRequested       .connect(self.closeTab)
-        self.fileOpenAction.triggered.connect(self.openFile)
-        self.fileSaveAction.triggered.connect(self.saveFile)
-        self.saveAsAction.triggered  .connect(lambda: self.saveFile(saveAs = True))
-        self.newTabAction.triggered  .connect(lambda: self.newTab())
-        self.closeTabAction.triggered.connect(lambda: self.closeTab(self.currentIndex()))
+        self.lspManager.diagnosticsReady.connect(self.routeDiagnostics)
+        self.tabCloseRequested          .connect(self.closeTab)
+        self.fileOpenAction.triggered   .connect(self.openFile)
+        self.fileSaveAction.triggered   .connect(self.saveFile)
+        self.saveAsAction.triggered     .connect(lambda: self.saveFile(saveAs = True))
+        self.newTabAction.triggered     .connect(lambda: self.newTab())
+        self.closeTabAction.triggered   .connect(lambda: self.closeTab(self.currentIndex()))
 
     def shortCutConfig(self):
         self.newTabAction = QAction("New Tab", self)
@@ -243,8 +264,3 @@ class editTabs(QTabWidget):
                 margin-right: 10px;
             }
         """)
-
-
-class LSPClient(QObject):
-    def __init__(self, parent):
-        super().__init__(parent)
