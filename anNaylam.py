@@ -5,7 +5,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget,
     QGridLayout, QScrollBar, QSizePolicy,
     QPushButton, QToolButton, QToolTip,
     QFrame, QLabel, QTreeView, QGraphicsOpacityEffect,
-    QPlainTextEdit, QTextEdit, QFileDialog)
+    QPlainTextEdit, QTextEdit, QFileDialog,
+    QListWidget)
 from PySide6.QtCore import (QProcess, Qt, QObject,
     Signal, QRectF, QRect,
     Slot, QPointF, QPoint,
@@ -20,7 +21,7 @@ from PySide6.QtGui import (QPainter, QColor, QPen,
     QTextCursor, QTextBlock, QShortcut,
     QTextCharFormat, QSyntaxHighlighter, QGuiApplication,
     QTextBlockUserData, QFontMetricsF, QWheelEvent,
-    QAbstractTextDocumentLayout, QMouseEvent)
+    QAbstractTextDocumentLayout, QMouseEvent, QTextLayout)
 from enum import Enum, auto
 from typing import cast
 from pathlib import Path
@@ -51,6 +52,17 @@ LANGUAGE_MAP = {
     ".json" : "json",
     ".cpp"  : "cpp",
     ".c"    : "c"
+}
+
+REV_LANGUAGE_MAP = {
+    "python"     : ".py",
+    "javascript" : ".js",
+    "typescript" : ".ts",
+    "html"       : ".html",
+    "css"        : ".css",
+    "json"       : ".json",
+    "cpp"        : ".cpp",
+    "c"          : ".c"
 }
 
 VS_CONTROL_FLOW = {
@@ -231,6 +243,7 @@ class Delimiter:
 
 
 class DelimitterArray:
+
     def __init__(self):
         self.Dlist : list[Delimiter] = []
 
@@ -303,7 +316,7 @@ class LineNumberArea(QWidget):
             border: 2px solid rgb(45, 45, 48);
             border-radius: 8px;
         """)
-        self.foldColor = QColor(46, 82, 98, 128)
+        self.foldColor = QColor(29, 66, 82, 120)
 
         self.setMouseTracking(True)
 
@@ -464,6 +477,7 @@ class LineNumberArea(QWidget):
 
             self.editor.HighLightLine()
             self.editor.viewport().update()
+            self.editor.updateMinimap()
             self.update()
         super().mousePressEvent(event)
 
@@ -602,16 +616,21 @@ class FoldManager:
 
     def initialScan(self, tree):
         self.regions = self.collectAll(tree)
-        self.debugPrint()
+        # self.debugPrint()
 
     def update(self, newTree):
         self.regions = self.collectAll(newTree)
-        self.debugPrint()
+        # self.debugPrint()
 
     def debugPrint(self):
         print("\n===== FOLDABLE REGIONS =====")
         for region in self.regions:
             print(region)
+
+
+class FSMLangPickState(Enum):
+    CONTROL_KEY = auto()
+    HOT_KEY     = auto()
 
 
 class CodeEditor(QPlainTextEdit):
@@ -634,6 +653,7 @@ class CodeEditor(QPlainTextEdit):
         self.Selection = CodeSelection()
         self.Context   = CodeContext(editor = self)
         self.OldSelect = None
+        self.FSMLang   = FSMLangPickState.CONTROL_KEY
 
         self.lspManager = lspManager
         self.lspClient  : Optional[LSPClient] = None
@@ -655,7 +675,7 @@ class CodeEditor(QPlainTextEdit):
 
         self.Font = QFont()
         self.Font.setFamilies(["Consolas", "Courier New"])
-        self.Font.setPixelSize(15)
+        self.Font.setPixelSize(16)
         self.setFont(self.Font)
         self.fm   = QFontMetricsF(self.Font)
 
@@ -666,8 +686,6 @@ class CodeEditor(QPlainTextEdit):
         self.cellWidth  = self.fm.horizontalAdvance("W")
         self.cellHeight = self.fm.height()
         self.Ascent     = self.fm.ascent()
-
-        print("Cell Height =", self.cellHeight)
 
         # self.cellWidth  = self.fontMetrics().horizontalAdvance("W")
         # self.cellHeight = self.fontMetrics().height()
@@ -692,7 +710,6 @@ class CodeEditor(QPlainTextEdit):
 
         self.foldUpdateFlag = False
         self.FoldManager    = FoldManager(self)
-        self.foldColor      = QColor(46, 82, 98)
 
         self.LineWidget = LineNumberArea(self.parent(), self, self.Font)
 
@@ -701,6 +718,7 @@ class CodeEditor(QPlainTextEdit):
         self.highlightTimer   = QTimer()
         self.highlightTimer.setSingleShot(True)
 
+        self.foldColor = QColor(23, 41, 49)
         self.foldTimer = QTimer()
         self.foldTimer.setSingleShot(True)
 
@@ -721,6 +739,7 @@ class CodeEditor(QPlainTextEdit):
         # self.bracketStack = []
         # self.blockBracketStack = [[]]
         # self.bracketMap = [{}]
+        self.miniMap = miniMap(editor=self, parent=self)
 
         self._blink_reset_timer = QTimer(self)
         self._blink_reset_timer.setSingleShot(True)
@@ -728,7 +747,6 @@ class CodeEditor(QPlainTextEdit):
         blockdata = BlockBracketData()
         self.firstVisibleBlock().setUserData(blockdata)
 
-        self.StyleConfig()
         self.HighLightLine()
         self.SignalManager()
         self.setCursorWidth(2)
@@ -736,7 +754,7 @@ class CodeEditor(QPlainTextEdit):
         # -- Vertical Bar Animation Setup --
         self.vbar_effect = QGraphicsOpacityEffect(self.floating_vbar)
         self.floating_vbar.setGraphicsEffect(self.vbar_effect)
-        
+
         self.vbar_anim = QPropertyAnimation(self.vbar_effect, b"opacity")
         self.vbar_anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
         self.vbar_anim.finished.connect(self._on_vbar_fade_finished)
@@ -751,6 +769,8 @@ class CodeEditor(QPlainTextEdit):
 
         self.scrollOffset = 0
 
+        self.viewport().setMouseTracking(True)
+
     def paintEvent(self, e):
         painter = QPainter(self.viewport())
         # painter.translate(0, self.scrollOffset)
@@ -762,7 +782,6 @@ class CodeEditor(QPlainTextEdit):
 
         painter.setPen(QPen(QColor(229, 229, 16), 1.5))
         for squiggle in self.warnSquiggles: self.drawSquiggle(painter, squiggle)
-
 
         base_x = self.document().documentMargin() + self.contentOffset().x()
         active_pos = None
@@ -880,7 +899,7 @@ class CodeEditor(QPlainTextEdit):
             if current_segment is not None:
                 segments_by_pos[pos].append(current_segment)
 
-        # --- STEP 3: DRAW MERGED CONTINUOUS LINES ---
+        # --- STEP 3: DRAW INDENT LINES ---
         pen_active = QColor(255, 255, 255, 150)
         pen_dim = QColor(255, 255, 255, 50)
 
@@ -893,6 +912,58 @@ class CodeEditor(QPlainTextEdit):
 
         painter.end()
         super().paintEvent(e)
+
+        if not self.toPlainText() and self.FileExt in {None, "plaintext"}:
+            painter = QPainter(self.viewport())
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+            Font = QFont(self.Font)
+            Font.setItalic(True)
+            fm = QFontMetricsF(Font)
+
+            textLink = "select a language "
+            textHint = "(Ctrl + K M)"
+            fullText = textLink + textHint
+
+            cursor = QTextCursor(self.document())
+            cursor.setPosition(0)
+            rect = self.cursorRect(cursor)
+            x = float(rect.x())
+            y = float(rect.y())
+
+            colorLink = QColor(72, 160, 199)
+            colorHint = QColor(103, 104, 105)
+
+            linkWidth = fm.horizontalAdvance(textLink)
+            self.languageRect = QRectF(x, y, linkWidth, float(rect.height()))
+
+            layout = QTextLayout(fullText, Font)
+            layout.setTextOption(self.document().defaultTextOption())
+
+            fmtLink = QTextLayout.FormatRange()
+            fmtLink.start = 0
+            fmtLink.length = len(textLink)
+            fmtLink.format.setForeground(colorLink)
+
+            fmtHint = QTextLayout.FormatRange()
+            fmtHint.start = len(textLink)
+            fmtHint.length = len(textHint)
+            fmtHint.format.setForeground(colorHint)
+
+            layout.setFormats([fmtLink, fmtHint])
+            layout.beginLayout()
+            line = layout.createLine()
+
+            if line.isValid():
+                baselineY = y + self.Ascent
+                drawY = baselineY - line.ascent()
+                line.setPosition(QPointF(x, drawY))
+            layout.endLayout()
+
+            layout.draw(painter, QPointF(0, -self.Ascent))
+            painter.end()
+        else:
+            self.languageRect = QRectF()
 
     def drawSquiggle(self, painter : QPainter, squiggle : Squiggle):
         for line in range(squiggle.start.row, squiggle.end.row + 1):
@@ -971,7 +1042,7 @@ class CodeEditor(QPlainTextEdit):
         if self.textCursor().hasSelection():
             self.setExtraSelections(self.errSelections + list(self.foldSelection.values()))
             return
-        
+
         line_color = QColor(255, 255, 255, 15)
 
         selection = QTextEdit.ExtraSelection()
@@ -1867,6 +1938,9 @@ class CodeEditor(QPlainTextEdit):
             cursor.insertText(event.commitString())
             self.setTextCursor(cursor)
 
+    def updateMinimap(self):
+        self.miniMap.update()
+
     def SignalManager(self):
         # self.fileOpenShortcut = QShortcut(QKeySequence("Ctrl + O"), self)
         # self.fileOpenShortcut.activated      .connect(self.openFile)
@@ -1889,25 +1963,35 @@ class CodeEditor(QPlainTextEdit):
         self._blink_reset_timer.timeout      .connect(self._restore_blinking)
         self.highlightTimer.timeout          .connect(self.executeHighlight)
         self.highlightTimer.timeout          .connect(lambda: self.FoldManager.update(self.newTree))
-
-    def StyleConfig(self):
-        self.setStyleSheet(
-            """
-            QPlainTextEdit {
-                border: none;
-                background-color: transparent;
-                selection-background-color: rgba(17, 168, 225, 100);
-            }
-            """
-        )
+        self.document().contentsChange       .connect(self.updateMinimap)
+        self.floating_vbar.valueChanged      .connect(self.miniMap.update)
 
     def keyPressEvent(self, e):
+        ctrlKeys = {
+            Qt.Key.Key_Control,
+            Qt.Key.Key_Meta
+        }
+        ctrlActive = bool(e.modifiers() & Qt.KeyboardModifier.ControlModifier)
+
         cursor = self.textCursor()
         ch = e.text()
         doc = self.document()
 
         app = QApplication.instance()
         app.setCursorFlashTime(0)
+        
+        if ctrlActive and e.key() == Qt.Key.Key_K:
+            self.FSMLang = FSMLangPickState.HOT_KEY
+            return
+
+        if self.FSMLang == FSMLangPickState.HOT_KEY and e.key() == Qt.Key.Key_M:
+            self.FSMLang = FSMLangPickState.CONTROL_KEY
+            self.langPicker = LanguagePicker(parent = self, editor = self)
+            # globalPos = self.viewport().mapToGlobal(e.position().toPoint())
+            # self.langPicker.move(globalPos)
+            self.langPicker.show()
+            return
+
 
         # if ch not in {'', '\t'}:
             # if cursor.hasSelection():
@@ -2214,7 +2298,14 @@ class CodeEditor(QPlainTextEdit):
         super().keyPressEvent(e)
         self._blink_reset_timer.start(50)
 
-    def mousePressEvent(self, e):
+    def mousePressEvent(self, e : QMouseEvent):
+        if not self.toPlainText() and self.FileExt in {None, "plaintext"} and self.languageRect.contains(e.position()):
+            self.langPicker = LanguagePicker(parent = self, editor = self)
+            globalPos = self.viewport().mapToGlobal(e.position().toPoint())
+            self.langPicker.move(globalPos)
+            self.langPicker.show()
+            return
+
         app = QApplication.instance()
         app.setCursorFlashTime(0)
         super().mousePressEvent(e)
@@ -2229,9 +2320,26 @@ class CodeEditor(QPlainTextEdit):
         # self.Language.syntax.printSyntax(node = node)
         # print(self.document().characterCount())
 
+    def mouseMoveEvent(self, e : QMouseEvent):
+            if not self.toPlainText() and self.languageRect.contains(e.position()):
+                self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+            else:
+                self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
+
+            super().mouseMoveEvent(e)
+
     def resizeEvent(self, e):
             super().resizeEvent(e)
-            self.viewport().setGeometry(self.rect())
+            mini_w = max(80, int(self.width() * 0.1))
+            mini_x = self.width() - mini_w - 10
+            mini_h = self.height()
+
+            self.miniMap.setGeometry(mini_x, 0, mini_w, mini_h)
+            self.miniMap.raise_()
+
+            # Reserve space so editor text doesn't overlap under the minimap
+            # self.setViewportMargins(0, 0, mini_w + 10, 0)
+
             self.updateFloatingScrollBars()
 
     def enterEvent(self, event):
@@ -2252,8 +2360,9 @@ class CodeEditor(QPlainTextEdit):
             self.hbar_anim.start()
 
     def leaveEvent(self, event):
+        self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
         super().leaveEvent(event)
-        
+
         if self.floating_vbar.isVisible():
             self.vbar_anim.stop()
             self.vbar_anim.setDuration(500)  # 500 milliseconds fade
@@ -2335,9 +2444,16 @@ class CodeEditor(QPlainTextEdit):
         dimension = "width: 8px;" if orientation == "vertical" else "height: 8px;"
         subdimension = "height: 0px;" if orientation == "vertical" else "width: 0px;"
         mindimension = "min-height: 25px;" if orientation == "vertical" else "min-width: 25px;"
+        self.setStyleSheet("""
+            QPlainTextEdit {
+                border: none;
+                background-color: transparent;
+                selection-background-color: rgba(17, 168, 225, 100);
+            }
+        """)
         widget.setStyleSheet(f"""
             QScrollBar:{orientation} {{
-                background: rgba(18, 19, 20, 128);
+                background: rgba(18, 19, 20, 255);
                 {dimension}
                 margin: 0px;
                 border: none;
@@ -2356,7 +2472,7 @@ class CodeEditor(QPlainTextEdit):
 
             QScrollBar::add-page:{orientation},
             QScrollBar::sub-page:{orientation} {{
-                background: rgba(18, 19, 20, 0);
+                background: rgba(18, 19, 20, 255);
             }}
 
             QScrollBar::add-line:{orientation},
@@ -2378,6 +2494,208 @@ class CodeSelection:
         self.Select     = False
         self.FirstBlock = None
         self.LastBlock  = None
+
+
+class miniMap(QWidget):
+
+    def __init__(self, editor: CodeEditor, parent=None):
+        super().__init__(parent)
+        self.editor     = editor
+        self.lineHeight = 3.5
+        self.hovering   = False
+
+        self.Font = QFont()
+        self.Font.setFamilies(["Consolas", "Courier New"])
+        self.Font.setPixelSize(3)
+
+        self.fm = QFontMetricsF(self.Font)
+
+        self.setMouseTracking(True)
+
+    def enterEvent(self, event):
+        self.hovering = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.hovering = False
+        self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, e):
+        painter = QPainter(self)
+        painter.fillRect(
+            self.rect(),
+            QColor(18, 19, 20, 200)
+        )
+
+        painter.setRenderHint(
+            QPainter.RenderHint.Antialiasing,
+            False
+        )
+
+        painter.setFont(self.Font)
+        painter.setPen(QColor(220, 220, 220))
+
+        firstEditorBlock = self.editor.firstVisibleBlock()
+
+        if not firstEditorBlock.isValid():
+            painter.end()
+            return
+
+        viewportRect = self.editor.viewport().rect()
+        contentOffset = self.editor.contentOffset()
+        block = firstEditorBlock
+        Nedit = 0
+
+        while block.isValid():
+            geometry = (self.editor.blockBoundingGeometry(block).translated(contentOffset))
+            top = geometry.top()
+            bottom = geometry.bottom()
+
+            if top > viewportRect.bottom():
+                break
+
+            if (block.isVisible() and bottom >= viewportRect.top()):
+                Nedit += 1
+
+            block = block.next()
+
+        if Nedit <= 0:
+            painter.end()
+            return
+
+        Nmin = int(self.height() / self.lineHeight)
+
+        if Nmin <= 0:
+            painter.end()
+            return
+
+        extra = max(0, Nmin - Nedit)
+
+        x = extra // 2
+        y = extra - x
+
+        firstMiniBlock = firstEditorBlock
+        blocksAbove = 0
+
+        while blocksAbove < x:
+            previousBlock = firstMiniBlock.previous()
+            if not previousBlock.isValid():
+                break
+
+            while (previousBlock.isValid() and not previousBlock.isVisible()):
+                previousBlock = previousBlock.previous()
+
+            if not previousBlock.isValid():
+                break
+
+            firstMiniBlock = previousBlock
+            blocksAbove += 1
+
+        viewportY = (3 + blocksAbove * self.lineHeight)
+        viewportHeight = (Nedit * self.lineHeight)
+
+        if self.hovering:
+            fillColor = QColor(255, 255, 255, 45)
+        else:
+            fillColor = QColor(255, 255, 255, 20)
+
+        radius = 6
+        
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(fillColor)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.drawRoundedRect(
+            0,
+            int(viewportY),
+            self.width(),
+            int(viewportHeight),
+            radius,
+            radius
+        )
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+        block = firstMiniBlock
+
+        counter = 0
+
+        while (block.isValid() and counter < Nmin):
+            if block.isVisible():
+                currentY = 3 + counter * self.lineHeight
+
+                if block.blockNumber() in self.editor.foldSelection:
+                    painter.fillRect(
+                        0,
+                        int(currentY - self.lineHeight + 1),
+                        self.width(),
+                        int(self.lineHeight),
+                        self.editor.foldColor
+                    )
+
+                text = block.text()
+                if text:
+                    layout = block.layout()
+                    formats = layout.formats()
+
+                    if not formats:
+                        painter.setPen(QColor(220, 220, 220))
+                        painter.drawText(
+                            2,
+                            int(currentY),
+                            text
+                        )
+                    else:
+                        xPos = 2
+                        formats = sorted(formats, key=lambda r: r.start)
+                        cursor = 0
+                        for fmt in formats:
+                            start = fmt.start
+                            end = start + fmt.length
+                            if start > cursor:
+                                plain = text[cursor:start]
+                                painter.setPen(QColor(220, 220, 220))
+                                painter.drawText(
+                                    int(xPos),
+                                    int(currentY),
+                                    plain
+                                )
+                                xPos += self.fm.horizontalAdvance(plain)
+
+                            segment = text[start:end]
+                            color = fmt.format.foreground().color()
+
+                            if color.isValid():
+                                painter.setPen(color)
+                            else:
+                                painter.setPen(QColor(220, 220, 220))
+
+                            painter.drawText(
+                                int(xPos),
+                                int(currentY),
+                                segment
+                            )
+
+                            xPos += self.fm.horizontalAdvance(segment)
+                            cursor = end
+
+                        if cursor < len(text):
+                            remaining = text[cursor:]
+                            painter.setPen(QColor(220, 220, 220))
+
+                            painter.drawText(
+                                int(xPos),
+                                int(currentY),
+                                remaining
+                            )
+                counter += 1
+
+            block = block.next()
+
+        painter.end()
+
+    def wheelEvent(self, event):
+        self.editor.wheelEvent(e = event)
 
 
 class delimiterContext:
@@ -2746,6 +3064,43 @@ class syntaxHighlighter(QSyntaxHighlighter):
                 color.setAlpha(alpha)
                 dFormat.setForeground(color)
                 self.setFormat(position, 1, dFormat)
+
+
+class LanguagePicker(QListWidget):
+    def __init__(self, parent, editor : CodeEditor):
+        super().__init__(parent)
+        self.editor = editor
+        self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setStyleSheet("""
+            QListWidget {
+                background-color: rgb(30, 30, 30);
+                color: rgb(200, 200, 200);
+                border: 1px solid rgb(60, 60, 60);
+                border-radius: 4px;
+                padding: 4px;
+            }
+            QListWidget::item {
+                padding: 4px 8px;
+            }
+            QListWidget::item:hover {
+                background-color: rgb(9, 71, 113); /* VS Code highlight blue */
+                border-radius: 2px;
+            }
+        """)
+        languages = sorted(set(LANGUAGE_MAP.values()))
+        self.addItems(languages)
+
+        self.itemClicked.connect(self.applylanguage)
+
+    def applylanguage(self, item):
+        language = item.text()
+
+        self.editor.FileExt = REV_LANGUAGE_MAP[language]
+
+        # TODO LSPSync in the editor
+        self.close()
+        self.editor.LSPSync()
+        self.editor.viewport().update()
 
 
 class readBufferState(Enum):

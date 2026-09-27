@@ -1187,7 +1187,7 @@ class TerminalSession(QObject):
             self.Session.resize(cols, rows)
 
     def Read(self, data : bytes):
-        print("PTY OUTPUT:", repr(data))
+        # print("PTY OUTPUT:", repr(data))
         decoded_text = data.decode('utf-8', errors='ignore')
         # print(decoded_text, end='', flush=True)
         self.Parser.feed(data.decode())

@@ -44,6 +44,33 @@ BLUE   = "\033[34m"
 RESET  = "\033[0m"
 
 class WorkSpaceRegistry:
+    EDITOR_MARKERS = {
+            ".sagittarius",       # Custom folder
+            ".vscode",            # VS Code config directory
+        }
+
+    # 2. Project / Tooling configuration indicators
+    PROJECT_MARKERS = {
+        # Python-specific
+        "pyproject.toml",
+        "pyrightconfig.json",
+        "setup.py",
+        "setup.cfg",
+        "requirements.txt",
+        "Pipfile",
+        # Language agnostic / Monorepos
+        "package.json",
+        "Cargo.toml",
+        "CMakeLists.txt",
+    }
+
+    # 3. Version control marker (strongest boundary indicator)
+    VCS_MARKERS = {
+        ".git",
+        ".hg",
+    }
+    
+
     def __init__(self):
         self.workSpace : Dict[Path, List[Path]] = {}
 
@@ -56,12 +83,30 @@ class WorkSpaceRegistry:
         if not filePath:
             return None
         absPath = Path(filePath).resolve()
-        for root, linked in self.workSpace.items():
-            if root == absPath.parent or root in absPath.parents:
-                return root
-            for lp in linked:
-                if lp == absPath.parent or lp in absPath.parents:
-                    return root
+        parentDirs = list(absPath.parents)
+        for parent in parentDirs:
+            if parent in self.workSpace:
+                return parent
+
+            for root, linkedDirs in self.workSpace.items():
+                for linked in linkedDirs:
+                    if parent == linked:
+                        return root
+
+        home = Path.home()
+        stopDirs = {
+            home,
+            home / "Desktop",
+            home / "Downloads",
+            home / "Documents",
+            home / "Pictures",
+            home / "Videos",
+            home / "Music"
+        }
+
+        for parent in parentDirs:
+            if parent in stopDirs or parent == parent.parent:
+                break
 
         return None
 
@@ -142,6 +187,7 @@ class LSPClient(QObject):
         if not started:
             print("Failed to start language server")
             return
+        print(f"{RED}Lang Srever Started{RESET}")
 
     def sendMessage(self, message):
         body = json.dumps(message).encode("utf-8")
