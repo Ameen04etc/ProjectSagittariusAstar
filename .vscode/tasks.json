@@ -20,6 +20,7 @@
                     "/IC:\\Python314\\include",
                     "/IC:\\opencv\\build\\include",
                     "/IC:\\Qt\\6.11.1\\msvc2022_64\\include",
+                    "/IC:\\Qt\\6.11.1\\msvc2022_64\\include\\QtWidgets",
                     "/IC:\\Qt\\6.11.1\\msvc2022_64\\include\\QtGui",
                     "/IC:\\Qt\\6.11.1\\msvc2022_64\\include\\QtCore",
 
@@ -27,7 +28,11 @@
                     "${file}",
 
                     "/link",
-                    "/LIBPATH:C:\\Python314\\libs"
+                    "/LIBPATH:C:\\Python314\\libs",
+                    "/LIBPATH:C:\\Qt\\6.11.1\\msvc2022_64\\lib",
+                    "Qt6Core.lib",
+                    "Qt6Gui.lib",
+                    "Qt6Widgets.lib"
                 ],
             "options": {
                 "cwd": "${fileDirname}"

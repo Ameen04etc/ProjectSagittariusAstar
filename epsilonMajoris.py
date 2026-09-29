@@ -903,7 +903,7 @@ class TerminalRenderer(QObject):
                 fg_color, bg_color = bg_color, fg_color
             if cell.Faint:
                 fg_color.setAlpha(128)
-            
+
             painter.fillRect(cellRect, bg_color)
 
             if cell.Conceal:
