@@ -228,6 +228,20 @@ def dictSort(dictionary : dict[int : ]):
     return {key : dictionary[key] for key in sorted(dictionary.keys())}
 
 
+class FrameProfiler:
+    def __init__(self):
+        self.last = time.perf_counter()
+        self.frames = []
+
+    def frame(self):
+        now = time.perf_counter()
+        dt = (now - self.last) * 1000
+        self.last = now
+        self.frames.append(dt)
+        if dt > 16.67:
+            print(f"FRAME DROP: {dt:.2f} ms")
+
+
 class LineIndent(Enum):
     Indent = auto()
     Dedent = auto()
@@ -430,7 +444,7 @@ class LineNumberArea(QWidget):
                     toFold.append(block)
 
                 self.editor.fold(blockNos = toFold)
-                print("Fold =", [k + 1 for k in toFold])
+                # print("Fold =", [k + 1 for k in toFold])
 
                 selection = QTextEdit.ExtraSelection()
                 selection.format.setBackground(self.foldColor)
@@ -441,8 +455,8 @@ class LineNumberArea(QWidget):
 
                 self.editor.foldSelection.update({self.onHandle : selection})
                 QTimer.singleShot(0, lambda: dictSort(dictionary = self.editor.foldSelection))
-                print("fold selection =", [k + 1 for k in self.editor.foldSelection.keys()])
-                print("------------")
+                # print("fold selection =", [k + 1 for k in self.editor.foldSelection.keys()])
+                # print("------------")
 
             else:
                 toUnFold = []
@@ -610,7 +624,8 @@ class FoldManager:
             if stack:
                 QTimer.singleShot(0, process_chunk)
             else:
-                print("DONE")
+                # print("DONE")
+                pass
         process_chunk()
         return regions
 
@@ -654,6 +669,13 @@ class CodeEditor(QPlainTextEdit):
         self.Context   = CodeContext(editor = self)
         self.OldSelect = None
         self.FSMLang   = FSMLangPickState.CONTROL_KEY
+
+        self.profiler = FrameProfiler()
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.profiler.frame)
+        self.timer.start(0)
+
+        self.setViewportMargins(0, 0, 10, 0)
 
         self.lspManager = lspManager
         self.lspClient  : Optional[LSPClient] = None
@@ -1015,11 +1037,6 @@ class CodeEditor(QPlainTextEdit):
 
             painter.drawPath(locus)
 
-    def reportChange(self):
-        # self.ChangeFlag = True
-        if self.NewFile: self.version = 1
-        else: self.version += 1
-
     def moveCursor(self, blockID, end = True):
         block = self.document().findBlockByNumber(blockID)
         if block.isValid():
@@ -1335,12 +1352,13 @@ class CodeEditor(QPlainTextEdit):
             return
         # if uri != self.FilePath:
         #     return
-        
+
         self.Diagnostics = diagnostics
         self.errSquiggles.clear()
         self.warnSquiggles.clear()
+        # print(self.Diagnostics)
 
-        for  diagnostic in self.Diagnostics:
+        for diagnostic in self.Diagnostics:
             if "range" in diagnostic.keys():
                 if diagnostic["severity"] == 1:
                     err = Squiggle()
@@ -1360,6 +1378,10 @@ class CodeEditor(QPlainTextEdit):
 
     def LSPSync(self):
         uri = self.documentURI
+        if self.NewFile:
+            self.version = 1
+            self.NewFile = False
+        else: self.version += 1
 
         langId = LANGUAGE_MAP.get(self.FileExt.lower())
         if not langId:
@@ -1447,7 +1469,12 @@ class CodeEditor(QPlainTextEdit):
             for row in range(rng.start_point[0], rng.end_point[0] + 1):
                 affectedBlocks.add(row)
 
+        print(self.pendingBlocks)
+
         self.pendingBlocks.update(affectedBlocks)
+
+        print(self.pendingBlocks)
+
         self.highlightVersion += 1
         self.highlightTimer.start(100)
 
@@ -1458,13 +1485,12 @@ class CodeEditor(QPlainTextEdit):
 
     def executeHighlight(self):
         blocks = sorted(list(self.pendingBlocks))
-        self.pendingBlocks.clear()
+        # self.pendingBlocks.clear()
         self.codeHighlight(blocks = blocks)
 
     def codeHighlight(self, blocks = None, refresh = False):
         if refresh:
             blocks = list(range(self.blockCount()))
-        blocks = list(range(self.blockCount()))
 
         if not blocks:
             return
@@ -1480,18 +1506,15 @@ class CodeEditor(QPlainTextEdit):
         def highlightNextChunk(idx):
             if currentVersion != self.highlightVersion:
                 return
-            
-            chunk = blocks[idx:idx + chunkLen]
 
+            chunk = blocks[idx:idx + chunkLen]
             for blockID in chunk:
                 block = self.document().findBlockByNumber(blockID)
-
                 if block.isValid():
                     self.Language.Highlighter.rehighlightBlock(block)
-                    # pass
+                    self.pendingBlocks.discard(blockID)
 
             nextIdx = idx + chunkLen
-
             if nextIdx < len(blocks):
                 QTimer.singleShot(
                     0,
@@ -1951,7 +1974,6 @@ class CodeEditor(QPlainTextEdit):
         self.selectionChanged                .connect(self.HighLightLine)
         self.updateRequest                   .connect(self.LineWidget.update)
         self.selectionChanged                .connect(self.updateSelection)
-        self.textChanged                     .connect(self.reportChange)
         self.LineWidget.scrollEmit           .connect(super().wheelEvent)
         self.LineWidget.lineSelectEmit       .connect(self.selectLine)
         self.document().contentsChange       .connect(self.incrementCapture)
@@ -1961,10 +1983,10 @@ class CodeEditor(QPlainTextEdit):
         self.floating_hbar.rangeChanged      .connect(self.updateFloatingScrollBars)
         self.floating_hbar.valueChanged      .connect(lambda: self.viewport().update())
         self._blink_reset_timer.timeout      .connect(self._restore_blinking)
-        self.highlightTimer.timeout          .connect(self.executeHighlight)
+        # self.highlightTimer.timeout          .connect(self.executeHighlight)
         self.highlightTimer.timeout          .connect(lambda: self.FoldManager.update(self.newTree))
-        self.document().contentsChange       .connect(self.updateMinimap)
-        self.floating_vbar.valueChanged      .connect(self.miniMap.update)
+        # self.document().contentsChange       .connect(self.updateMinimap)
+        # self.floating_vbar.valueChanged      .connect(self.miniMap.update)
 
     def keyPressEvent(self, e):
         ctrlKeys = {
@@ -2330,7 +2352,7 @@ class CodeEditor(QPlainTextEdit):
 
     def resizeEvent(self, e):
             super().resizeEvent(e)
-            mini_w = max(80, int(self.width() * 0.1))
+            mini_w = max(80, int(self.width() * 0.05))
             mini_x = self.width() - mini_w - 10
             mini_h = self.height()
 
@@ -2379,25 +2401,37 @@ class CodeEditor(QPlainTextEdit):
             self.hbar_anim.start()
 
     def wheelEvent(self, e : QWheelEvent):
-        deltaY = (e.angleDelta().y() / 120) * 10
-        self.scrollOffset += deltaY
+        # deltaY = (e.angleDelta().y() / 120) * 100
+        # self.scrollOffset += deltaY % self.cellHeight
+        # delLines = deltaY // self.cellHeight + self.scrollOffset // self.cellHeight
+        # self.scrollOffset = self.scrollOffset % self.cellHeight
 
-        event = QWheelEvent(
-            e.position(),
-            e.globalPosition(),
-            QPoint(e.pixelDelta().x(), 0),
-            QPoint(e.angleDelta().x(), 0),
-            e.buttons(),
-            e.modifiers(),
-            e.phase(),
-            e.inverted(),
-            e.source(),
-        )
+        # self.setViewportMargins(0, self.scrollOffset - self.cellHeight, 10, 0)
+
+        # self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delLines)
+
+        # print("Height =", self.cellHeight)
+        # print("del Y =", deltaY)
+        # print("del Lines =", delLines)
+        # print("------")
+
+        # event = QWheelEvent(
+        #     e.position(),
+        #     e.globalPosition(),
+        #     QPoint(e.pixelDelta().x(), 0),
+        #     QPoint(e.angleDelta().x(), 0),
+        #     e.buttons(),
+        #     e.modifiers(),
+        #     e.phase(),
+        #     e.inverted(),
+        #     e.source(),
+        # )
+        # # self.setViewportMargins(0, self.scrollOffset, 10, 0)
         super().wheelEvent(e)
 
     def updateFloatingScrollBars(self, *args):
         bar_thickness = 10
-        self.viewport().setGeometry(self.rect())
+        # self.viewport().setGeometry(self.rect())
 
         v_needed = self.floating_vbar.maximum() > self.floating_vbar.minimum()
         h_needed = self.floating_hbar.maximum() > self.floating_hbar.minimum()
@@ -2501,38 +2535,27 @@ class miniMap(QWidget):
     def __init__(self, editor: CodeEditor, parent=None):
         super().__init__(parent)
         self.editor     = editor
-        self.lineHeight = 3.5
+        self.lineHeight = 2.5
         self.hovering   = False
 
         self.Font = QFont()
         self.Font.setFamilies(["Consolas", "Courier New"])
-        self.Font.setPixelSize(3)
+        self.Font.setPixelSize(2)
 
         self.fm = QFontMetricsF(self.Font)
 
         self.setMouseTracking(True)
 
-    def enterEvent(self, event):
-        self.hovering = True
-        self.update()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        self.hovering = False
-        self.update()
-        super().leaveEvent(event)
-
     def paintEvent(self, e):
+        super().paintEvent(e)
+        return
         painter = QPainter(self)
         painter.fillRect(
             self.rect(),
-            QColor(18, 19, 20, 200)
+            QColor(18, 19, 20)
         )
 
-        painter.setRenderHint(
-            QPainter.RenderHint.Antialiasing,
-            False
-        )
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
         painter.setFont(self.Font)
         painter.setPen(QColor(220, 220, 220))
@@ -2598,23 +2621,19 @@ class miniMap(QWidget):
 
         if self.hovering:
             fillColor = QColor(255, 255, 255, 45)
-        else:
-            fillColor = QColor(255, 255, 255, 20)
-
-        radius = 6
-        
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(fillColor)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        painter.drawRoundedRect(
-            0,
-            int(viewportY),
-            self.width(),
-            int(viewportHeight),
-            radius,
-            radius
-        )
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+            radius = 6
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(fillColor)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.drawRoundedRect(
+                0,
+                int(viewportY),
+                self.width(),
+                int(viewportHeight),
+                radius,
+                radius
+            )
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
         block = firstMiniBlock
 
@@ -2696,6 +2715,16 @@ class miniMap(QWidget):
 
     def wheelEvent(self, event):
         self.editor.wheelEvent(e = event)
+
+    def enterEvent(self, event):
+        self.hovering = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.hovering = False
+        self.update()
+        super().leaveEvent(event)
 
 
 class delimiterContext:
@@ -3122,11 +3151,70 @@ class LSPDocument:
         self.version    = 1
 
 
+class testEdit(QPlainTextEdit):
+    def __init__(self, parent, lspManager):
+        super().__init__(parent)
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.Font = QFont()
+        self.Font.setFamilies(["Consolas", "Courier New"])
+        self.Font.setPixelSize(16)
+        self.setFont(self.Font)
+        self.fm = QFontMetricsF(self.Font)
+
+        self.profiler = FrameProfiler()
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.profiler.frame)
+        self.timer.start(0)
+
+        self.setStyleSheet("""
+            QPlainTextEdit {
+                border: none;
+                background-color: transparent;
+                selection-background-color: rgba(17, 168, 225, 100);
+            }
+        """)
+        self.selections = []
+
+    def fold(self, blockNos : list, update = False):
+        doc = self.document()
+        for idx in blockNos:
+            block = doc.findBlockByNumber(idx)
+            block.setVisible(False)
+            doc.markContentsDirty(block.position(), block.length())
+
+        if update:
+            self.viewport().update()
+
+    def mousePressEvent(self, e : QMouseEvent):
+        if e.button() == Qt.RightButton:
+            cursor = self.textCursor()
+            if cursor.hasSelection():
+                first =self.document().findBlock(cursor.selectionStart()).blockNumber()
+                last =self.document().findBlock(cursor.selectionEnd()).blockNumber()
+                print(first, last)
+                self.fold(blockNos=range(first + 1, last + 1), update=True)
+                selection = QTextEdit.ExtraSelection()
+                selection.format.setBackground(QColor(100, 0, 0, 128))
+                selection.cursor = QTextCursor(self.document().findBlockByNumber(first))
+                selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+                self.selections.append(selection)
+                self.setExtraSelections(self.selections)
+        super().mousePressEvent(e)
+
+    def mouseDoubleClickEvent(self, e):
+        self.selections.clear()
+        self.setExtraSelections([])
+        super().mouseDoubleClickEvent(e)
+    
+
+
+
 class MasterEditor(QWidget):
 
     def __init__(self, parent, lspManager : LSPManager):
         super().__init__(parent)
         self.editor = CodeEditor(self, lspManager = lspManager)
+        # self.editor = testEdit(self, lspManager)
         self.LayoutConfig()
 
     def LayoutConfig(self):
@@ -3140,7 +3228,8 @@ class MasterEditor(QWidget):
 class  MainWindow(QMainWindow):
     def __init__(self, parent = None):
         super().__init__(parent)
-        Main = MasterEditor(self)
+        # Main = MasterEditor(self)
+        Main = testEdit(self)
         self.setWindowTitle("anNaylam")
         self.setCentralWidget(Main)
 

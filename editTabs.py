@@ -7,6 +7,7 @@ from PySide6.QtGui import (QShortcut, QKeySequence, QAction, QKeyEvent,
     QFont, QPalette)
 
 from PySide6.QtCore import (QUrl, Qt)
+from urllib.parse import unquote
 
 from pathlib import Path
 from anNaylam import *
@@ -42,10 +43,16 @@ class editTabs(QTabWidget):
 
         self.newTab()
 
-    def routeDiagnostics(self, uri : str, version : int, diagnostics : list):
+    def routeDiagnostics(self, uri : str, version : int, diagnostics : dict):
+        print(diagnostics)
         for index in range(self.count()):
             editor = self.widget(index).findChild(MasterEditor)
-            if editor and editor.editor.documentURI == uri:
+            print("uri = ", editor.editor.documentURI)
+            uri = unquote(uri).lower()
+            docURI = unquote(editor.editor.documentURI).lower()
+            print(docURI == uri)
+            if editor and docURI == uri:
+                print("success")
                 editor.editor.diagnose(uri = uri, version = version, diagnostics = diagnostics)
 
     def closeTab(self, index):

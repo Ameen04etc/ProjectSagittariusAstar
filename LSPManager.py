@@ -26,6 +26,7 @@ from PySide6.QtGui import (QPainter, QColor, QPen,
 from enum import Enum, auto
 from typing import cast
 from tree_sitter import Language, Parser
+from urllib.parse import unquote
 from LSPManager import *
 import tree_sitter_python
 import json
@@ -284,32 +285,35 @@ class LSPClient(QObject):
         while True:
             if self.OutputBuffer.State == readBufferState.HEADER:
                 headerEnd = self.OutputBuffer.Buffer.find(b"\r\n\r\n")
-                if headerEnd != -1:
-                    Header = self.OutputBuffer.Buffer[:headerEnd].decode("utf-8")
-                    self.OutputBuffer.Buffer = self.OutputBuffer.Buffer[(headerEnd + 4):]       # <---- "\r\n\r\n" (total 4 bytes)
-                    # print("Header =", Header)
-                    for line in Header.split("\r\n"):
-                        if line.startswith("Content-Length"):
-                            self.BodyLength = int(line.split(":")[1].strip())
-                            break
-                    self.OutputBuffer.State = readBufferState.BODY
-                    if len(self.OutputBuffer.Buffer) == 0:
-                        break
+                if headerEnd == -1:
+                    break
 
-            if self.OutputBuffer.State == readBufferState.BODY:
-                if len(self.OutputBuffer.Buffer) >= self.BodyLength:
-                    Body = self.OutputBuffer.Buffer[:self.BodyLength].decode("utf-8")
-                    self.OutputBuffer.Buffer = self.OutputBuffer.Buffer[self.BodyLength:]
-                    # print("Body =", json.loads(Body))
+                Header = self.OutputBuffer.Buffer[:headerEnd].decode("utf-8")
+                self.OutputBuffer.Buffer = self.OutputBuffer.Buffer[(headerEnd + 4):]       # <---- "\r\n\r\n" (total 4 bytes)
+                # print("Header =", Header)
+                self.BodyLength = 0
+                for line in Header.split("\r\n"):
+                    if line.startswith("Content-Length"):
+                        self.BodyLength = int(line.split(":")[1].strip())
+                        break
+                self.OutputBuffer.State = readBufferState.BODY
+
+            elif self.OutputBuffer.State == readBufferState.BODY:
+                if len(self.OutputBuffer.Buffer) < self.BodyLength:
+                    break
+                BodyBytes = self.OutputBuffer.Buffer[:self.BodyLength]
+                Body = BodyBytes.decode("utf-8")
+                self.OutputBuffer.Buffer = self.OutputBuffer.Buffer[self.BodyLength:]
+                self.OutputBuffer.State = readBufferState.HEADER
+                if Body.strip():
                     self.readMessage(message = Body)
 
-                    self.OutputBuffer.State = readBufferState.HEADER
-                    if self.OutputBuffer.Buffer: continue
-                    else: break
-                else: break
+                if not self.OutputBuffer.Buffer:
+                    break
 
     def readMessage(self, message):
         message = json.loads(message)
+        # print(message)
         if "id" in message:
             if "result" in message:
                 self.handleResponse(message)
@@ -329,6 +333,7 @@ class LSPClient(QObject):
     def handleNotification(self, message):
         # print("Notification:\r\n", message, "\r\n\r\n")
         if message["method"] == "textDocument/publishDiagnostics":
+            print(message)
             self.handleDiagnostics(message)
 
     def handleDiagnostics(self, message):
@@ -342,14 +347,14 @@ class LSPClient(QObject):
         uri     = params["uri"]
         version = params["version"]
         diagnostics = params["diagnostics"]
-        # print(version, uri)
+        print(version, uri)
 
         self.diagnosticsReady.emit(uri, version, diagnostics)
 
         for i, diagnostic in enumerate(diagnostics):
             k = i % 4
-            # print(colorMap[k], diagnostic)
-            # print(f"{RESET}")
+            print(colorMap[k], diagnostic)
+            print(f"{RESET}")
         pass
 
     def readError(self):

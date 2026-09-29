@@ -497,8 +497,6 @@ class TerminalWidget(QPlainTextEdit):
         event.accept()
 
     def resizeEvent(self, event : QResizeEvent):
-        print("widget width =", self.width())
-        print("viewport width =", self.viewport().width())
         oldSize = event.oldSize()
         newSize = event.size()
         if not oldSize.isValid():
