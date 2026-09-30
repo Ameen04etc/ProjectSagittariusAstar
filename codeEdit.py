@@ -267,8 +267,6 @@ class textEdit(QWidget):
         elif row > 0:
             toAppend = self.document().findBlockByNumber(row).Chars[:]
             self.document().findBlockByNumber(row - 1).Chars.extend(toAppend)
-        self.update(prevRect)
-        self.resetCursor()
 
     def navLeft(self):
         cursX = self.textCursor().visibleCol() * self.cellW + self.leftMargin()
