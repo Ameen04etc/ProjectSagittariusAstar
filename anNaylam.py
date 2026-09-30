@@ -21,7 +21,7 @@ from PySide6.QtGui import (QPainter, QColor, QPen,
     QTextCursor, QTextBlock, QShortcut,
     QTextCharFormat, QSyntaxHighlighter, QGuiApplication,
     QTextBlockUserData, QFontMetricsF, QWheelEvent,
-    QAbstractTextDocumentLayout, QMouseEvent, QTextLayout)
+    QAbstractTextDocumentLayout, QTextLayout)
 from enum import Enum, auto
 from typing import cast
 from pathlib import Path
