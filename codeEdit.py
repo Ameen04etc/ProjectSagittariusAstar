@@ -263,10 +263,12 @@ class textEdit(QWidget):
 
         if col > 0:
             del self.document().findBlockByNumber(row).Chars[col - 1]
+            self.navLeft()
         elif row > 0:
             toAppend = self.document().findBlockByNumber(row).Chars[:]
             self.document().findBlockByNumber(row - 1).Chars.extend(toAppend)
-
+        self.update(prevRect)
+        self.resetCursor()
 
     def navLeft(self):
         cursX = self.textCursor().visibleCol() * self.cellW + self.leftMargin()
@@ -274,13 +276,13 @@ class textEdit(QWidget):
         prevRect = QRect(int(cursX) - self.cellW // 2, int(cursY) - 1, 2 + self.cellW // 2, int(self.cellH) + 1)
 
         if self.textCursor().visibleCol() > 0:
-            self.textCursor().setVisibleCol(self.textCursor().visibleCol() - 1)
-            self.textCursor().syncStoredCoord()
+            self.textCursor().set_Visible_Col(self.textCursor().visibleCol() - 1)
+            self.textCursor().sync_Stored_Coord()
         else:
             if self.textCursor().visibleRow() > 0:
-                self.textCursor().setVisibleRow(self.textCursor().visibleRow() - 1)
-                self.textCursor().setVisibleCol(len(self.document().findBlockByNumber(self.textCursor().visibleRow()).Chars))
-                self.textCursor().syncStoredCoord()
+                self.textCursor().set_Visible_Row(self.textCursor().visibleRow() - 1)
+                self.textCursor().set_Visible_Col(len(self.document().findBlockByNumber(self.textCursor().visibleRow()).Chars))
+                self.textCursor().sync_Stored_Coord()
         self.update(prevRect)
         self.resetCursor()
 
@@ -510,12 +512,19 @@ class textCell:
 
 
 class TextCursor:
-    def __init__(self, doc : textDocument):
+    def __init__(self, editor : textEdit, doc : textDocument):
         self._doc = doc
+        self._edit = editor
         self.visibleCoord = textPosition()
         self.absoluteCoord = textPosition()
         self._storedVisibleCoord = textPosition()
         self._storedAbsoluteCoord = textPosition()
+
+    def cellW(self):
+        return self._edit.cellW
+
+    def cellH(self):
+        return self._edit.cellH
 
     def block(self):
         return self._doc.blocks()[self.visibleCoord.row()]
@@ -626,6 +635,21 @@ class TextCursor:
             block = self._doc.visibleBlocks()[block]
             return block.blockNumber()
 
+    def navLeft(self):
+        cursX = self.visibleCol() * self.cellW() + self._edit.leftMargin()
+        cursY = self.visibleRow() * self.cellH() + self._edit.topMargin() - self._edit._scroll
+        prevRect = QRect(int(cursX) - self.cellW // 2, int(cursY) - 1, 2 + self.cellW // 2, int(self.cellH) + 1)
+
+        if self.visibleRow() > 0:
+            self.set_Visible_Row(self.textCursor().visibleRow() - 1)
+            strLength = self._doc.findBlockByNumber(self.visibleRow()).totalCharacters()
+            self.set_Visible_Col(min(strLength, self.stored_Visible_Coord().col()))
+        else:
+            self.set_Visible_Col(0)
+            self.sync_Stored_Coord()
+        self._edit.update(prevRect)
+        self.resetCursor()
+
 
 class textPosition:
     def row(self):
@@ -676,3 +700,7 @@ window.resize(target_width, target_height)
 window.move(avail.x() + (avail.width() // 2), avail.y())
 
 sys.exit(app.exec())
+
+
+
+#### SEE IF YOU CAN UPDATE THE RESET CURSOR AND CURSOR NAVIGATIONS WITHOUT COMPUTING ALL THE TEXTS IN THE PAINT EVENT
