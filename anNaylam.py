@@ -2548,7 +2548,7 @@ class miniMap(QWidget):
 
     def paintEvent(self, e):
         super().paintEvent(e)
-        return
+        # return
         painter = QPainter(self)
         painter.fillRect(
             self.rect(),
