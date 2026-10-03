@@ -22,7 +22,7 @@ from PySide6.QtGui import (QPainter, QColor, QPen,
     QTextCharFormat, QSyntaxHighlighter, QGuiApplication,
     QTextBlockUserData, QFontMetricsF, QWheelEvent,
     QAbstractTextDocumentLayout, QMouseEvent, QTextLayout,
-    QKeyEvent, QPaintEvent)
+    QKeyEvent, QPaintEvent, QWheelEvent)
 from enum import Enum, auto
 from typing import cast
 from pathlib import Path
@@ -119,7 +119,7 @@ class textEdit(QWidget):
                     )
 
                     painter.setPen(cell.color)
-                    painter.drawRect(cellRect)
+                    # painter.drawRect(cellRect)
                     painter.drawText(
                         x, y + self.Ascent,
                         cell.char
@@ -243,7 +243,8 @@ class textEdit(QWidget):
         doc.blocks().insert(lineNo, block)
         doc.visibleBlocks().insert(lineNo, block)
 
-        self.moveTo(lineNo, 0)
+        self.textCursor().moveTo(lineNo, 0)
+        self._maxScrollY += self.cellH
         self.update()
 
     def insert(self, ch):
@@ -270,23 +271,9 @@ class textEdit(QWidget):
             abs_row = self.textCursor().visibleToAbsolute(row)
             del self.document().visibleBlocks()[row]
             del self.document().blocks()[abs_row]
+            self._maxScrollY -= self.cellH
+            if self._maxScrollY < 0: self._maxScrollY = 0
         self.update()
-
-    def moveTo(self, row, col):
-        cursX = self.textCursor().visibleCol() * self.cellW + self.leftMargin()
-        cursY = self.textCursor().visibleRow() * self.cellH + self.topMargin() - self._scrollY
-        prevRect = QRect(int(cursX) - self.cellW // 2, int(cursY) - 1, 2 + self.cellW // 2, int(self.cellH) + 1)
-
-        lastBlock = self.document().blocks()[-1]
-        row = min(row, lastBlock.blockNumber())
-        totalCar = self.document().blocks()[row].totalCharacters()
-        col = min(col, totalCar)
-
-        self.textCursor().set_Visible_Row(row)
-        self.textCursor().set_Visible_Col(col)
-        self.textCursor().sync_Stored_Coord()
-        self.update(prevRect)
-        self.resetCursor()
 
     def keyPressEvent(self, event : QKeyEvent):
         if   event.key() == Qt.Key.Key_Left:
@@ -344,15 +331,17 @@ class textEdit(QWidget):
             self.update()
         super().keyPressEvent(event)
 
-    def keyReleaseEvent(self, event):
+    def keyReleaseEvent(self, event : QKeyEvent):
         if   event.key() == Qt.Key.Key_Shift:
             self.shiftModifier = False
         elif event.key() in {Qt.Key.Key_Control, Qt.Key.Key_Meta}:
             self.controlModifier = False
         super().keyReleaseEvent(event)
 
-    def mousePressEvent(self, event):
-        print("message")
+    def mousePressEvent(self, event : QMouseEvent):
+        x = event.position().x() + self._scrollX
+        y = event.position().y() + self._scrollY
+        self.textCursor().moveTo(row = int(y / self.cellH), col = int(x / self.cellW + 1 / 2), scroll = False)
         super().mousePressEvent(event)
 
     def enterEvent(self, event):
@@ -362,6 +351,26 @@ class textEdit(QWidget):
     def leaveEvent(self, event):
         self.setCursor(Qt.CursorShape.ArrowCursor)
         super().leaveEvent(event)
+
+    def wheelEvent(self, event : QWheelEvent):
+        Xdelta = event.angleDelta().x() * self.cellH / 120
+        Ydelta = event.angleDelta().y() * self.cellW / 120
+
+        self._scrollX -= Xdelta
+        self._scrollY -= Ydelta
+        print(self._scrollX, self._maxScrollX)
+        print(self._scrollY, self._maxScrollY)
+
+        if self._scrollX < 0: self._scrollX = 0
+        if self._scrollX > self._maxScrollX: self._scrollX = self._maxScrollX
+        if self._scrollY < 0: self._scrollY = 0
+        if self._scrollY > self._maxScrollY: self._scrollY = self._maxScrollY
+        self.update()
+        super().wheelEvent(event)
+
+    def resizeEvent(self, event):
+        self.update()
+        super().resizeEvent(event)
 
 
 class textDocument:
@@ -479,6 +488,7 @@ class TextCursor:
         self.absoluteCoord = textPosition(row, col)
         self._storedVisibleCoord = textPosition(row, col)
         self._storedAbsoluteCoord = textPosition(row, col)
+        self._selection = textSelection()
 
     def editor(self):
         return self._edit
@@ -496,7 +506,7 @@ class TextCursor:
 
         return prevRect
 
-    def block(self):
+    def block(self) -> textBlock:
         return self._doc.blocks()[self.visibleCoord.row()]
 
     def visibleRow(self):
@@ -616,7 +626,8 @@ class TextCursor:
         headroomYDown = self.editor().height() - self.editor().bottomMargin() - cursY
 
         if headroomXLeft < 2 * self.cellW():
-            self.editor()._scrollX = Rect.x() - 2 * self.cellW()
+            diff = 2 * self.cellW() - headroomXLeft
+            self.editor()._scrollX -= diff
             if self.editor()._scrollX < 0: self.editor()._scrollX = 0
         if headroomXRight < 2 * self.cellW():
             diff = 2 * self.cellW() - headroomXRight
@@ -629,6 +640,11 @@ class TextCursor:
         if headroomYDown < 2 * self.cellH():
             diff = 2 * self.cellH() - headroomYDown
             self.editor()._scrollY += diff
+
+        if self.editor()._scrollX > self.editor()._maxScrollX:
+            self.editor()._maxScrollX = self.editor()._scrollX
+        if self.editor()._scrollY > self.editor()._maxScrollY:
+            self.editor()._maxScrollY = self.editor()._scrollY
 
     def navLeft(self):
         if self.visibleCol() > 0:
@@ -683,6 +699,61 @@ class TextCursor:
         self.scrollConfig()
         self._edit.update()
         self._edit.resetCursor()
+
+    def moveTo(self, row, col, scroll = True):
+        lastBlock = self._doc.blocks()[-1]
+        ipRow = row
+        row = min(row, lastBlock.blockNumber())
+        totalCar = self._doc.blocks()[row].totalCharacters()
+        if row == lastBlock.blockNumber() and ipRow != row:
+            col = totalCar
+        else:
+            col = min(col, totalCar)
+
+        self.set_Visible_Row(row)
+        self.set_Visible_Col(col)
+        self.sync_Stored_Coord()
+
+        if scroll:
+            self.scrollConfig()
+        self.editor().update()
+        self.editor().resetCursor()
+
+    def hasSelection(self) -> bool:
+        return self._selection.hasSelection()
+
+    def selectionStart(self) -> textPosition:
+        return self._selection.selectionStart()
+
+    def selectionStop(self) -> textPosition:
+        return self._selection.selectionStop()
+
+    def selection(self) -> textSelection:
+        return self._selection
+
+
+class textSelection:
+    def __init__(self):
+        self.start = textPosition(row = None, col = None)
+        self.stop  = textPosition(row = None, col = None)
+
+    def reset(self):
+        self.start.setRow(None)
+        self.start.setCol(None)
+
+        self.stop.setRow(None)
+        self.stop.setCol(None)
+
+    def selectionStart(self) -> textPosition:
+        return self.start
+
+    def selectionStop(self) -> textPosition:
+        return self.stop
+
+    def hasSelection(self) -> bool:
+        if self.start.row() and self.start.col() and self.stop.row() and self.stop.col():
+            return True
+        return False
 
 
 class textPosition:
