@@ -45,6 +45,49 @@ YELLOW = "\033[33m"
 BLUE   = "\033[34m"
 RESET  = "\033[0m"
 
+COLORMAP = {
+    0   : f"{RED}",
+    1   : f"{GREEN}",
+    2   : f"{YELLOW}",
+    3   : f"{BLUE}"
+}
+
+QT_COLORMAP = {
+    0: Qt.red,
+    1: Qt.green,
+    2: Qt.yellow,
+    3: Qt.blue
+}
+
+
+def dotProduct(v1 : tuple, v2 : tuple) -> float:
+    arr1 = np.array(v1)
+    arr2 = np.array(v2)
+
+    return arr1 @ arr2
+
+
+def angle(v1 : tuple, v2 : tuple) -> float:
+    arr1 = np.array(v1)
+    arr2 = np.array(v2)
+
+    dot = arr1 @ arr2
+
+    mag1 = np.linalg.norm(arr1)
+    mag2 = np.linalg.norm(arr2)
+
+    if mag1 == 0 or mag2 == 0:
+        return 0.0
+        
+    cos_theta = dot / (mag1 * mag2)
+    
+    # Clip the value to [-1.0, 1.0] to prevent math domain errors
+    # caused by tiny floating-point precision inaccuracies
+    cos_theta = np.clip(cos_theta, -1.0, 1.0)
+
+    # Returns the angle in radians
+    return np.degrees(np.arccos(cos_theta))
+
 
 class textEdit(QWidget):
 
@@ -55,22 +98,29 @@ class textEdit(QWidget):
 
         self.Font = QFont()
         self.Font.setFamilies(["Consolas", "Courier New"])
-        self.fontSize = 30
+        self.fontSize = 15
         self.Font.setPixelSize(self.fontSize)
         self.fm = QFontMetricsF(self.Font)
 
         self.cellW  = self.fm.horizontalAdvance("W")
         self.cellH  = self.fm.height()
         self.Ascent = self.fm.ascent()
+
         self._scrollY = 0
         self._scrollX = 0
         self._maxScrollX = 0
         self._maxScrollY = 0
+        self.scrollTimer = QTimer()
+        self.scrollActive = False
+        self.scrollTimer.setSingleShot(True)
+        self.scrollTimer.timeout.connect(lambda: setattr(self, "scrollActive", False))
+        self.scrollTimer.timeout.connect(self.update)
 
         self.toggle = False
         self.cursorVisible = True
         self.cursWidth = 2
         self.cursDelay = 500
+        self.cursCount = 0
         self.cursTimer = QTimer(self)
         self.cursTimer.start(self.cursDelay)
         self.cursTimer.timeout.connect(self.toggleCursor)
@@ -78,27 +128,35 @@ class textEdit(QWidget):
         self.controlModifier = False
         self.shiftModifier   = False
 
+        self._updateReason = None
+        self.showReason = False
+        self.paintCount = 0
+
+        self.mousePressed = False
+        self.mouseMoved = False
+
         self.setMargins()
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def paintEvent(self, event : QPaintEvent):
+        self.paintCount += 1
         painter = QPainter(self)
         painter.setFont(self.Font)
         painter.fillRect(event.rect(), QColor(18, 19, 20))
         # if event.rect() != self.rect():
         #     painter.drawRect(event.rect())
-        # painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if self.showReason:
+            print("Count =", self.paintCount,"reason = ", self._updateReason, "toggle =", self.toggle)
+        self._updateReason = None
 
         start = self.firstVisibleBlock().blockNumber()
         stop  = self.lastVisibleBlock().blockNumber()
         row = start
 
         if not self.toggle:
-            # print("-------------")
             while True:
                 if row > stop:
                     break
-                # print("row =", row, "stop =", stop)
                 block = self.document().visibleBlocks()[row]
                 y = row * self.cellH + self.topMargin() - self._scrollY
 
@@ -112,21 +170,55 @@ class textEdit(QWidget):
                     x = col * self.cellW + self.leftMargin() - self._scrollX
                     if x > self.width() - self.rightMargin():
                         break
+                    painter.setPen(cell.color)
+                    painter.setBrush(Qt.NoBrush)
+                    painter.drawText(
+                        x, y + self.Ascent,
+                        cell.char
+                    )
 
                     cellRect = QRectF(
                         x, y,
                         self.cellW, self.cellH
                     )
-
-                    painter.setPen(cell.color)
-                    # painter.drawRect(cellRect)
-                    painter.drawText(
-                        x, y + self.Ascent,
-                        cell.char
-                    )
-                #     print(cell.char, end='')
-                # print('\r')
                 row += 1
+
+        else:
+            if self.showReason:
+                print("missed")
+
+        if self.textCursor().hasSelection():
+            aRow, aCol = self.textCursor().selectionStart().Coord()
+            bRow, bCol = self.textCursor().selectionStop().Coord()
+
+            selectionPath = QPainterPath()
+
+            for row in range(aRow, bRow + 1):
+                startCol = aCol if row == aRow else 0
+                
+                # Add + 1 to totalCharacters() to highlight the invisible newline character
+                endCol = bCol if row == bRow else self.document().findBlockByNumber(row).totalCharacters() + 1
+
+                x = startCol * self.cellW - self._scrollX
+                y = row * self.cellH - self._scrollY
+                width = (endCol - startCol) * self.cellW
+                height = self.cellH + 0.1
+
+                line_rect = QRectF(x, y, width, height)
+
+                temp_path = QPainterPath()
+                temp_path.addRect(line_rect)
+
+                selectionPath = selectionPath.united(temp_path)
+            
+            # Smooth the path only ONCE after all rows are united
+            roundedSelection = self.smoothPath(selectionPath, radius=6, painter=painter)
+
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(72, 184, 232, 128))
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.drawPath(roundedSelection)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
         if self.cursorVisible and self.hasFocus():
             cursorPen = QPen(QColor(200, 200, 200, 255), self.cursWidth)
@@ -136,27 +228,125 @@ class textEdit(QWidget):
             if x == 0: x = 1
             painter.drawLine(x, y + 1.2, x, y + self.cellH - 1.2)
 
-        row = self.textCursor().visibleRow()
-        col = self.textCursor().visibleCol()
+        # row = self.textCursor().visibleRow()
+        # col = self.textCursor().visibleCol()
 
-        ch0 = self.characterAt(row, col - 1)
-        ch1 = self.characterAt(row - 1, col)
-        ch2 = self.characterAt(row, col)
-        ch3 = self.characterAt(row + 1, col)
-        painter.setPen(QPen(QColor(200, 200, 200, 255), 1))
-        if ch0:
-            x = (col - 1) * self.cellW + self.leftMargin() - self._scrollX
-            y = row * self.cellH + self.topMargin() - self._scrollY
-            painter.drawText(x, y + self.Ascent, ch0)
-        if ch2:
-            x = col * self.cellW + self.leftMargin() - self._scrollX
-            y = row * self.cellH + self.topMargin() - self._scrollY
-            painter.drawText(x, y + self.Ascent, ch2)
+        # ch0 = self.characterAt(row, col - 1)
+        # ch1 = self.characterAt(row - 1, col)
+        # ch2 = self.characterAt(row, col)
+        # ch3 = self.characterAt(row + 1, col)
+        # painter.setPen(QPen(QColor(200, 200, 200, 255), 1))
+        # if ch0:
+        #     x = (col - 1) * self.cellW + self.leftMargin() - self._scrollX
+        #     y = row * self.cellH + self.topMargin() - self._scrollY
+        #     # painter.drawText(x, y + self.Ascent, ch0)
+        # if ch2:
+        #     x = col * self.cellW + self.leftMargin() - self._scrollX
+        #     y = row * self.cellH + self.topMargin() - self._scrollY
+        #     # painter.drawText(x, y + self.Ascent, ch2)
 
         self.toggle = False
 
         painter.end()
         super().paintEvent(event)
+
+    def smoothPath(self, path: QPainterPath, radius: float = 4.0, painter : QPainter = None) -> QPainterPath:
+        polygon = path.toFillPolygon()
+
+        # A valid selection polygon needs at least 3 points
+        if polygon.size() < 3:
+            return path
+
+        points = [polygon.at(i) for i in range(polygon.size())]
+
+        if points[0] == points[-1]:
+            points.pop()
+
+        n = len(points)
+        if n < 3:
+            return path
+
+        roundedPath = QPainterPath()
+        reducedPoints = []
+
+        for p in points:
+            if len(reducedPoints) < 2:
+                reducedPoints.append(p)
+                continue
+
+            p1 = reducedPoints[-2]
+            p2 = reducedPoints[-1]
+            p3 = p
+
+            is_horizontal = (round(p1.y()) == round(p2.y()) == round(p3.y()))
+            is_vertical = (round(p1.x()) == round(p2.x()) == round(p3.x()))
+
+            if is_horizontal or is_vertical:
+                reducedPoints[-1] = p3
+            else:
+                reducedPoints.append(p3)
+
+        r = self.cellW // 2
+        start = reducedPoints[0]
+        regions = [[]]
+        New = False
+        for p in reducedPoints:
+            if New:
+                start = p
+                New = False
+            if p == start:
+                if p not in regions[-1]:
+                    regions[-1].append(p)
+                else:
+                    New = True
+                    regions.append([])
+                    continue
+            elif p != start:
+                regions[-1].append(p)
+
+        # painter.fillRect(self.rect(), QColor(18, 19, 20))
+        for region in regions:
+            n = len(region)
+            # print("---")
+
+            for i in range(n):
+                p0 = region[i - 1]
+                p1 = region[i]
+                p2 = region[(i + 1) % n]
+
+                # color = COLORMAP[i % 4]
+                # qColor = QT_COLORMAP[i % 4]
+                # print(color, (p1.x(), p1.y()), f"{RESET}")
+                # painter.setPen(QPen(qColor, 5))
+                # painter.drawPoint(p)
+
+                a = None
+                b = None
+
+                if round(p0.x()) == round(p1.x()):
+                    sgn = (p1.y() - p0.y())/abs(p1.y() - p0.y())
+                    a = QPointF(p1.x(), p1.y() - sgn * r)
+                elif round(p0.y()) == round(p1.y()):
+                    sgn = (p1.x() - p0.x())/abs(p1.x() - p0.x())
+                    a = QPointF(p1.x() - sgn * r, p1.y())
+
+                if round(p2.x()) == round(p1.x()):
+                    sgn = (p1.y() - p2.y())/abs(p1.y() - p2.y())
+                    b = QPointF(p1.x(), p1.y() - sgn * r)
+                elif round(p2.y()) == round(p1.y()):
+                    sgn = (p1.x() - p2.x())/abs(p1.x() - p2.x())
+                    b = QPointF(p1.x() - sgn * r, p1.y())
+
+                if a and b:
+                    if i == 0:
+                        roundedPath.moveTo(a)
+                        roundedPath.quadTo(p1, b)
+                    else:
+                        roundedPath.lineTo(a)
+                        roundedPath.quadTo(p1, b)
+
+        roundedPath.closeSubpath()
+        return roundedPath
 
     def resetCursor(self):
         self.toggle = False
@@ -173,7 +363,10 @@ class textEdit(QWidget):
             self.cursorVisible = not self.cursorVisible
             cursX = self.textCursor().visibleCol() * self.cellW + self.leftMargin() - self._scrollX
             cursY = self.textCursor().visibleRow() * self.cellH + self.topMargin() - self._scrollY
-            self.update(QRect(int(cursX) - 2, int(cursY), 6, int(self.cellH)))
+            if not self.scrollActive:
+                self._updateReason = "toggle"
+                self.update(QRect(int(cursX) - self.cellW, int(cursY) - 1, 2 * int(self.cellW), int(self.cellH) + 1))
+            self.toggle = False
 
     def document(self):
         return self._document
@@ -277,16 +470,16 @@ class textEdit(QWidget):
 
     def keyPressEvent(self, event : QKeyEvent):
         if   event.key() == Qt.Key.Key_Left:
-            self.textCursor().navLeft()
+            self.textCursor().navLeft(Anchor = self.shiftModifier)
 
         elif event.key() == Qt.Key.Key_Right:
-            self.textCursor().navRight()
+            self.textCursor().navRight(Anchor = self.shiftModifier)
 
         elif event.key() == Qt.Key.Key_Up:
-            self.textCursor().navUp()
+            self.textCursor().navUp(Anchor = self.shiftModifier)
 
         elif event.key() == Qt.Key.Key_Down:
-            self.textCursor().navDn()
+            self.textCursor().navDn(Anchor = self.shiftModifier)
 
         elif event.key() in {Qt.Key.Key_Return, Qt.Key.Key_Enter}:
             self.newLine()
@@ -304,7 +497,7 @@ class textEdit(QWidget):
             for _ in range(4):
                 self.insert(' ')
 
-        elif self.controlModifier and event.key() == Qt.Key.Key_Plus:
+        elif self.controlModifier and event.key() == Qt.Key.Key_Equal:
             self.fontSize += 1
             self.Font.setPixelSize(self.fontSize)
             self.fm = QFontMetricsF(self.Font)
@@ -312,6 +505,7 @@ class textEdit(QWidget):
             self.cellW  = self.fm.horizontalAdvance("W")
             self.cellH  = self.fm.height()
             self.Ascent = self.fm.ascent()
+            self.update()
 
         elif self.controlModifier and event.key() == Qt.Key.Key_Minus:
             self.fontSize -= 1
@@ -321,6 +515,7 @@ class textEdit(QWidget):
             self.cellW  = self.fm.horizontalAdvance("W")
             self.cellH  = self.fm.height()
             self.Ascent = self.fm.ascent()
+            self.update()
 
         elif event.key() == Qt.Key.Key_CapsLock:
             pass
@@ -339,10 +534,28 @@ class textEdit(QWidget):
         super().keyReleaseEvent(event)
 
     def mousePressEvent(self, event : QMouseEvent):
+        self.mousePressed = True
+        if event.button() == Qt.RightButton:
+            self.showReason = True
         x = event.position().x() + self._scrollX
         y = event.position().y() + self._scrollY
         self.textCursor().moveTo(row = int(y / self.cellH), col = int(x / self.cellW + 1 / 2), scroll = False)
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event : QMouseEvent):
+        if self.mousePressed:
+            self.mouseMoved = True
+            x = event.position().x() + self._scrollX
+            y = event.position().y() + self._scrollY
+            self.textCursor().moveTo(row = int(y / self.cellH), col = int(x / self.cellW + 1 / 2), scroll = False, Anchor = True)
+        event.accept()
+
+    def mouseReleaseEvent(self, event : QMouseEvent):
+        if self.textCursor().hasSelection() and not self.mouseMoved:
+            self.textCursor().selection().reset()
+        self.mousePressed = False
+        self.mouseMoved = False
+        event.accept()
 
     def enterEvent(self, event):
         self.setCursor(Qt.CursorShape.IBeamCursor)
@@ -352,28 +565,38 @@ class textEdit(QWidget):
         self.setCursor(Qt.CursorShape.ArrowCursor)
         super().leaveEvent(event)
 
-    def wheelEvent(self, event : QWheelEvent):
-        Xdelta = event.angleDelta().x() * self.cellH / 120
-        Ydelta = event.angleDelta().y() * self.cellW / 120
+    def wheelEvent(self, event: QWheelEvent):
+        self._updateReason = "wheelEvent"
+        self.scrollTimer.start(100)
+        dx = event.angleDelta().x()
+        dy = event.angleDelta().y()
+
+        Xdelta = dx * self.cellH / 120
+        Ydelta = dy * self.cellW / 120
+
+        prevX = self._scrollX
+        prevY = self._scrollY
 
         self._scrollX -= Xdelta
         self._scrollY -= Ydelta
-        print(self._scrollX, self._maxScrollX)
-        print(self._scrollY, self._maxScrollY)
 
         if self._scrollX < 0: self._scrollX = 0
         if self._scrollX > self._maxScrollX: self._scrollX = self._maxScrollX
         if self._scrollY < 0: self._scrollY = 0
         if self._scrollY > self._maxScrollY: self._scrollY = self._maxScrollY
-        self.update()
+
+        if prevX != self._scrollX or prevY != self._scrollY:
+            self.update()
         super().wheelEvent(event)
 
     def resizeEvent(self, event):
+        self._updateReason = "resizeEvent"
         self.update()
         super().resizeEvent(event)
 
 
 class textDocument:
+
     def __init__(self):
         self._blocks   : list[textBlock] = [textBlock(self, 0)]
         self._visible  : list[textBlock] = [block for block in self._blocks]
@@ -430,6 +653,7 @@ class textDocument:
 
 
 class textBlock:
+
     def __init__(self, doc : textDocument, blockNumber = 0):
         self.Chars : list[textCell] = []
         self.document = doc
@@ -486,6 +710,7 @@ class TextCursor:
         self._edit = editor
         self.visibleCoord = textPosition(row, col)
         self.absoluteCoord = textPosition(row, col)
+        self._anchor = textPosition(row, col)
         self._storedVisibleCoord = textPosition(row, col)
         self._storedAbsoluteCoord = textPosition(row, col)
         self._selection = textSelection()
@@ -509,11 +734,20 @@ class TextCursor:
     def block(self) -> textBlock:
         return self._doc.blocks()[self.visibleCoord.row()]
 
+    def anchor(self):
+        return self._anchor
+
+    def visibleCoord(self) -> tuple:
+        return(self.visibleRow(), self.visibleCol())
+
     def visibleRow(self):
         return self.visibleCoord.row()
 
     def visibleCol(self):
         return self.visibleCoord.col()
+
+    def AbsoluteCoord(self) -> tuple:
+        return(self.absoluteRow(), self.absoluteCol())
 
     def absoluteRow(self):
         return self.absoluteCoord.row()
@@ -646,78 +880,129 @@ class TextCursor:
         if self.editor()._scrollY > self.editor()._maxScrollY:
             self.editor()._maxScrollY = self.editor()._scrollY
 
-    def navLeft(self):
+    def navLeft(self, Anchor = False):
         if self.visibleCol() > 0:
-            self.set_Visible_Col(self.visibleCol() - 1)
+            row = self.visibleRow()
+            col = self.visibleCol() - 1
+            self.set_Visible_Col(col)
             self.sync_Stored_Coord()
+            self.AnchorConfig(row, col, Anchor)
         else:
             if self.visibleRow() > 0:
-                self.set_Visible_Row(self.visibleRow() - 1)
-                self.set_Visible_Col(len(self._doc.findBlockByNumber(self.visibleRow()).Chars))
+                row = self.visibleRow() - 1
+                col = len(self._doc.findBlockByNumber(row).Chars)
+                self.set_Visible_Row(row)
+                self.set_Visible_Col(col)
                 self.sync_Stored_Coord()
+                self.AnchorConfig(row, col, Anchor)
 
         self.scrollConfig()
         self._edit.update()
         self._edit.resetCursor()
 
-    def navRight(self):
+    def navRight(self, Anchor = False):
         if self.visibleCol() < self._doc.findBlockByNumber(self.visibleRow()).totalCharacters():
-            self.set_Visible_Col(self.visibleCol() + 1)
+            row = self.visibleRow()
+            col = self.visibleCol() + 1
+            self.set_Visible_Col(col)
             self.sync_Stored_Coord()
+            self.AnchorConfig(row, col, Anchor)
         else:
             if self.visibleRow() < self._doc.totalBlocks() - 1:
-                self.set_Visible_Row(self.visibleRow() + 1)
-                self.set_Visible_Col(0)
+                row = self.visibleRow() + 1
+                col = 0
+                self.set_Visible_Row(row)
+                self.set_Visible_Col(col)
                 self.sync_Stored_Coord()
+                self.AnchorConfig(row, col, Anchor)
 
         self.scrollConfig()
         self._edit.update()
         self._edit.resetCursor()
 
-    def navUp(self):
+    def navUp(self, Anchor = False):
         if self.visibleRow() > 0:
-            self.set_Visible_Row(self.visibleRow() - 1)
+            row = self.visibleRow() - 1
+            self.set_Visible_Row(row)
             strLength = self._doc.findBlockByNumber(self.visibleRow()).totalCharacters()
-            self.set_Visible_Col(min(strLength, self.stored_Visible_Coord().col()))
+            col = min(strLength, self.stored_Visible_Coord().col())
+            self.set_Visible_Col(col)
         else:
+            row = self.visibleRow()
+            col = 0
             self.set_Visible_Col(0)
             self.sync_Stored_Coord()
 
+        self.AnchorConfig(row, col, Anchor)
+
         self.scrollConfig()
         self._edit.update()
         self._edit.resetCursor()
 
-    def navDn(self):
+    def navDn(self, Anchor = False):
         if self.visibleRow() < self._doc.totalBlocks() - 1:
-            self.set_Visible_Row(self.visibleRow() + 1)
+            row = self.visibleRow() + 1
+            self.set_Visible_Row(row)
             strLength = self._doc.findBlockByNumber(self.visibleRow()).totalCharacters()
-            self.set_Visible_Col(min(strLength, self.stored_Visible_Coord().col()))
+            col = min(strLength, self.stored_Visible_Coord().col())
+            self.set_Visible_Col(col)
         else:
-            self.set_Visible_Col(self._doc.findBlockByNumber(self._doc.totalBlocks() - 1).totalCharacters())
+            row = self.visibleRow()
+            col = self._doc.findBlockByNumber(self._doc.totalBlocks() - 1).totalCharacters()
+            self.set_Visible_Col(col)
             self.sync_Stored_Coord()
 
+
+        self.AnchorConfig(row, col, Anchor)
+
         self.scrollConfig()
         self._edit.update()
         self._edit.resetCursor()
 
-    def moveTo(self, row, col, scroll = True):
+    def moveTo(self, row, col, scroll = True, Anchor = False):
         lastBlock = self._doc.blocks()[-1]
         ipRow = row
         row = min(row, lastBlock.blockNumber())
+        row = max(0, row)
         totalCar = self._doc.blocks()[row].totalCharacters()
         if row == lastBlock.blockNumber() and ipRow != row:
             col = totalCar
         else:
             col = min(col, totalCar)
+            col = max(0, col)
 
         self.set_Visible_Row(row)
         self.set_Visible_Col(col)
         self.sync_Stored_Coord()
 
+        self.AnchorConfig(row, col, Anchor)
+
         if scroll:
             self.scrollConfig()
-        self.editor().update()
         self.editor().resetCursor()
+        self.editor().update()
+
+    def AnchorConfig(self, row, col, Anchor=False):
+        if not Anchor:
+            self._anchor.setRow(row)
+            self._anchor.setCol(col)
+
+            self.selectionStart().setRow(row)
+            self.selectionStart().setCol(col)
+
+            self.selectionStop().setRow(row)
+            self.selectionStop().setCol(col)
+
+            return
+
+        start = min((self._anchor.row(), self._anchor.col()), (self.absoluteRow(), self.absoluteCol()))
+        stop  = max((self._anchor.row(), self._anchor.col()), (self.absoluteRow(), self.absoluteCol()))
+
+        self.selectionStop().setRow(stop[0])
+        self.selectionStop().setCol(stop[1])
+
+        self.selectionStart().setRow(start[0])
+        self.selectionStart().setCol(start[1])
 
     def hasSelection(self) -> bool:
         return self._selection.hasSelection()
@@ -733,16 +1018,14 @@ class TextCursor:
 
 
 class textSelection:
+
     def __init__(self):
-        self.start = textPosition(row = None, col = None)
-        self.stop  = textPosition(row = None, col = None)
+        self.start = textPosition(row = 0, col = 0)
+        self.stop  = textPosition(row = 0, col = 0)
 
     def reset(self):
-        self.start.setRow(None)
-        self.start.setCol(None)
-
-        self.stop.setRow(None)
-        self.stop.setCol(None)
+        self.stop.setRow(self.start.row())
+        self.stop.setCol(self.start.col())
 
     def selectionStart(self) -> textPosition:
         return self.start
@@ -751,12 +1034,16 @@ class textSelection:
         return self.stop
 
     def hasSelection(self) -> bool:
-        if self.start.row() and self.start.col() and self.stop.row() and self.stop.col():
-            return True
-        return False
+        if self.selectionStart().row() == self.selectionStop().row() and self.selectionStart().col() == self.selectionStop().col():
+            return False
+        return True    
 
 
 class textPosition:
+
+    def Coord(self) -> tuple:
+        return (self.row(), self.col())
+
     def row(self):
         return self._y
 
