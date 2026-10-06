@@ -167,12 +167,12 @@ class textEdit(QWidget):
                 selectionPath = selectionPath.united(temp_path)
 
             # Smooth the path only ONCE after all rows are united
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             roundedSelection = self.smoothPath(selectionPath, radius=6, painter=painter)
 
             painter.setPen(Qt.NoPen)
             if self.hasFocus(): painter.setBrush(QColor(79.2, 202.4, 255, 116.36))
             else: painter.setBrush(QColor(50, 147, 183, 64))
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
             painter.drawPath(roundedSelection)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
@@ -275,6 +275,17 @@ class textEdit(QWidget):
             else:
                 reducedPoints.append(p3)
 
+        # painter.fillRect(self.rect(), QColor(18, 19, 20))
+        # for i, p in enumerate(reducedPoints):
+        #     qColor = QT_COLORMAP[i % 4]
+        #     color = COLORMAP[i % 4]
+        #     print(color, (p.x(), p.y()), f"{RESET}")
+        #     pen = QPen(qColor, 5)
+        #     pen.setCapStyle(Qt.RoundCap)
+        #     painter.setPen(pen)
+        #     painter.drawPoint(p)
+        # print("------")
+
         r = self.cellW // 2
         start = reducedPoints[0]
         regions = [[]]
@@ -288,12 +299,13 @@ class textEdit(QWidget):
                     regions[-1].append(p)
                 else:
                     New = True
+                    if len(regions[-1]) < 3:
+                        regions.pop(-1)
                     regions.append([])
                     continue
             elif p != start:
                 regions[-1].append(p)
 
-        # painter.fillRect(self.rect(), QColor(18, 19, 20))
         for region in regions:
             n = len(region)
             # print("---")
@@ -334,6 +346,7 @@ class textEdit(QWidget):
                         roundedPath.lineTo(a)
                         roundedPath.quadTo(p1, b)
 
+        # print("------------------------")
         roundedPath.closeSubpath()
         return roundedPath
 
