@@ -479,8 +479,33 @@ class textEdit(QWidget):
             toAppend = self.document().findBlockByNumber(row).Chars[:]
             self.textCursor().navLeft()
             self.document().findBlockByNumber(row - 1).Chars.extend(toAppend)
-            abs_row = self.textCursor().absoluteCoord().row()
+            abs_row = self.document().visibleToAbsolute(row)
             del self.document().visibleBlocks()[row]
+            del self.document().blocks()[abs_row]
+            self.document().reEnumerate()
+            self._maxScrollY -= self.cellH
+            if self._maxScrollY < 0: self._maxScrollY = 0
+        self.update()
+
+    def deleteRight(self, position : textPosition | None = None):
+        if not position:
+            row = self.textCursor().visibleCoord().row()
+            col = self.textCursor().visibleCoord().col()
+        else:
+            row = position.row()
+            col = position.col()
+        block = self.document().findBlockByVisibleNumber(row)
+        blockLength = block.totalCharacters()
+
+        abs_row = self.document().visibleToAbsolute(row)
+
+        if col < blockLength:
+            del block.Chars[col]
+        elif abs_row < len(self.document().blocks()) - 1:
+            toAppend = block.next().Chars[:]
+            block.Chars.extend(toAppend)
+            if row + 1 < len(self.document().visibleBlocks()):
+                del self.document().visibleBlocks()[row + 1]
             del self.document().blocks()[abs_row + 1]
             self.document().reEnumerate()
             self._maxScrollY -= self.cellH
@@ -516,6 +541,8 @@ class textEdit(QWidget):
     def keyPressEvent(self, event : QKeyEvent):
         if self.controlModifier:
             if   event.key() == Qt.Key.Key_Equal:
+                pCellW = self.cellW
+                pCellH = self.cellH
                 self.fontSize += 1
                 self.Font.setPixelSize(self.fontSize)
                 self.fm = QFontMetricsF(self.Font)
@@ -523,8 +550,16 @@ class textEdit(QWidget):
                 self.cellW  = self.fm.horizontalAdvance("W")
                 self.cellH  = self.fm.height()
                 self.Ascent = self.fm.ascent()
+
+                self._scrollX = self._scrollX * self.cellW / pCellW
+                self._scrollY = self._scrollY * self.cellH / pCellH
+                self._maxScrollX = self._maxScrollX * self.cellW / pCellW
+                self._maxScrollY = self._maxScrollY * self.cellH / pCellH
+
                 self.update()
             elif event.key() == Qt.Key.Key_Minus:
+                pCellW = self.cellW
+                pCellH = self.cellH
                 self.fontSize -= 1
                 self.Font.setPixelSize(self.fontSize)
                 self.fm = QFontMetricsF(self.Font)
@@ -532,6 +567,12 @@ class textEdit(QWidget):
                 self.cellW  = self.fm.horizontalAdvance("W")
                 self.cellH  = self.fm.height()
                 self.Ascent = self.fm.ascent()
+
+                self._scrollX = self._scrollX * self.cellW / pCellW
+                self._scrollY = self._scrollY * self.cellH / pCellH
+                self._maxScrollX = self._maxScrollX * self.cellW / pCellW
+                self._maxScrollY = self._maxScrollY * self.cellH / pCellH
+
                 self.update()
             elif event.key() == Qt.Key.Key_C:
                 self.copySelection()
@@ -616,6 +657,10 @@ class textEdit(QWidget):
             if self.textCursor().hasSelection(): self.deleteSelection()
             else: self.deleteLeft()
 
+        elif event.key() == Qt.Key.Key_Delete:
+            if self.textCursor().hasSelection(): self.deleteSelection()
+            else: self.deleteRight()
+
         elif event.key() == Qt.Key.Key_Shift:
             self.shiftModifier = True
 
@@ -681,8 +726,8 @@ class textEdit(QWidget):
         dx = event.angleDelta().x()
         dy = event.angleDelta().y()
 
-        Xdelta = dx * self.cellH / 120
-        Ydelta = dy * self.cellW / 120
+        Xdelta = dx * self.cellH * 2 / 120
+        Ydelta = dy * self.cellW * 2 / 120
 
         prevX = self._scrollX
         prevY = self._scrollY
@@ -734,6 +779,11 @@ class textDocument:
             return self._blocks[blockNumber]
         return None
 
+    def findBlockByVisibleNumber(self, visibleIndex) -> textBlock | None:
+        if visibleIndex < len(self._visible):
+            return self._visible[visibleIndex]
+        return None
+
     def findBlock(self, textCursor : textPosition):
         blockNo = textCursor.col()
         if blockNo < len(self.document):
@@ -767,10 +817,29 @@ class textDocument:
         self._blocks = new_blocks
         self._visible = [b for b in self._visible if b not in removed_blocks]
 
-    def insertBlock(self, absIndex, visibleIndex):
+    def insertBlock(self, absIndex = None, visibleIndex = None):
+        if (absIndex is not None) and (visibleIndex is None):
+            visibleIndex = self.absoluteToVisible(absIndex)
+        elif (visibleIndex is not None) and (absIndex is None):
+            absIndex = self.visibleToAbsolute(visibleBlock = visibleIndex)
         newBlock = textBlock(doc = self, blockNumber = absIndex)
         self._blocks.insert(absIndex, newBlock)
         self._visible.insert(visibleIndex, newBlock)
+
+    def absoluteToVisible(self, absoluteBlock : int | textBlock):
+        if isinstance(absoluteBlock, int):
+            absoluteBlock = self.findBlockByNumber(absoluteBlock)
+        try:
+            return self._visible.index(absoluteBlock)
+        except ValueError:
+            return None
+
+    def visibleToAbsolute(self, visibleBlock : int | textBlock):
+        if hasattr(visibleBlock, 'textBlock'):
+            return visibleBlock.blockNumber()
+        else:
+            visibleBlock = self.visibleBlocks()[visibleBlock]
+            return visibleBlock.blockNumber()
 
 
 class textBlock:
@@ -1161,20 +1230,21 @@ class pairedPosition:
         self.set_Absolute_Row(row)
         self.setCol(col)
 
-    def absoluteToVisible(self, block : int | textBlock):
-        if isinstance(block, int):
-            block = self._doc.findBlockByNumber(block)
+    def absoluteToVisible(self, absoluteBlock : int | textBlock):
+        print("abs to vis")
+        if isinstance(absoluteBlock, int):
+            absoluteBlock = self._doc.findBlockByNumber(absoluteBlock)
         try:
-            return self._doc._visible.index(block)
+            return self._doc._visible.index(absoluteBlock)
         except ValueError:
             return None
 
-    def visibleToAbsolute(self, block : int | textBlock):
-        if hasattr(block, 'textBlock'):
-            return block.blockNumber()
+    def visibleToAbsolute(self, visibleBlock : int | textBlock):
+        if hasattr(visibleBlock, 'textBlock'):
+            return visibleBlock.blockNumber()
         else:
-            block = self._doc.visibleBlocks()[block]
-            return block.blockNumber()
+            visibleBlock = self._doc.visibleBlocks()[visibleBlock]
+            return visibleBlock.blockNumber()
 
 
 class textPosition:
