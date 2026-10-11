@@ -475,12 +475,12 @@ class textEdit(QWidget):
             col = position.col()
 
         if col > 0:
-            del self.document().findBlockByNumber(row).Chars[col - 1]
+            del self.document().findBlockByVisibleNumber(row).Chars[col - 1]
             self.textCursor().navLeft()
         elif row > 0:
-            toAppend = self.document().findBlockByNumber(row).Chars[:]
+            toAppend = self.document().findBlockByVisibleNumber(row).Chars[:]
             self.textCursor().navLeft()
-            self.document().findBlockByNumber(row - 1).Chars.extend(toAppend)
+            self.document().findBlockByVisibleNumber(row - 1).Chars.extend(toAppend)
             abs_row = self.document().visibleToAbsolute(row)
             del self.document().visibleBlocks()[row]
             del self.document().blocks()[abs_row]
@@ -571,9 +571,66 @@ class textEdit(QWidget):
             self.textCursor().moveTo(visRow = int(y / self.cellH), col = int(x / self.cellW + 1 / 2), scroll = False, Anchor = True)
             self.update()
 
+    def jumpLeft(self, Anchor = False):
+        col = self.textCursor().Coord().col()
+        row = self.textCursor().absoluteCoord().row()
+
+        if col == 0:
+            if row > 0:
+                self.textCursor().navLeft()
+            return
+
+        block = self.document().findBlockByNumber(row)
+        ch = block.Chars[col - 1].char
+
+        if ch.isalpha() or ch.isdigit():
+            while True:
+                col -= 1
+                if col < 0:
+                    col = 0
+                    break
+                ch = block.Chars[col - 1].char
+                if not (ch.isalpha() or ch.isdigit()):
+                    col += 1
+                    break
+            self.textCursor().moveToCol(col = col, Anchor = Anchor)
+
+        self.update()
+        self.resetCursor()
+
+    def jumpRight(self, Anchor = False):
+        col = self.textCursor().Coord().col()
+        row = self.textCursor().absoluteCoord().row()
+
+        block = self.document().findBlockByNumber(row)
+        blockLen = block.totalCharacters()
+        if col == blockLen:
+            if row < self.document().totalBlocks() - 1:
+                self.textCursor().navRight()
+            return
+
+        ch = block.Chars[col].char
+
+        if ch.isalpha or ch.isdigit():
+            while True:
+                col += 1
+                if col >= blockLen:
+                    col = blockLen
+                    break
+                ch = block.Chars[col].char
+                if not (ch.isalpha() or ch.isdigit()):
+                    # col += 1
+                    break
+            self.textCursor().moveToCol(col = col, Anchor = Anchor)
+
+        self.update()
+        self.resetCursor()
+
     def keyPressEvent(self, event : QKeyEvent):
         if self.controlModifier:
-            if   event.key() == Qt.Key.Key_Equal:
+            if event.key() == Qt.Key.Key_Shift:
+                self.shiftModifier = True
+            elif event.key() == Qt.Key.Key_Equal:
                 pCellW = self.cellW
                 pCellH = self.cellH
                 self.fontSize += 1
@@ -630,8 +687,13 @@ class textEdit(QWidget):
                 if self.textCursor().hasSelection():
                     self.deleteSelection()
                 row = self.textCursor().visibleCoord().row()
+                nLine = 0
                 for char in reversed(text):
                     if char == '\n':
+                        nLine += 1
+                        if nLine > 500:
+                            nLine = 0
+                            self.update()
                         col = self.textCursor().visibleCoord().col()
                         self.newLine(visLineNo = row, enumerate = False)
                         self.textCursor().navBlockEnd()
@@ -664,6 +726,12 @@ class textEdit(QWidget):
                 self.textCursor().navToStart(scroll = False)
                 self.textCursor().navToEnd(scroll = False, Anchor = True)
                 self.update()
+            elif event.key() == Qt.Key.Key_Left:
+                if self.shiftModifier: self.jumpLeft(Anchor = True)
+                else: self.jumpLeft()
+            elif event.key() == Qt.Key.Key_Right:
+                if self.shiftModifier: self.jumpRight(Anchor = True)
+                else: self.jumpRight()
 
         elif event.key() == Qt.Key.Key_Left:
             if self.textCursor().hasSelection() and not self.shiftModifier:
@@ -718,9 +786,9 @@ class textEdit(QWidget):
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event : QKeyEvent):
-        if   event.key() == Qt.Key.Key_Shift:
+        if event.key() == Qt.Key.Key_Shift:
             self.shiftModifier = False
-        elif event.key() in {Qt.Key.Key_Control, Qt.Key.Key_Meta}:
+        if event.key() in {Qt.Key.Key_Control, Qt.Key.Key_Meta}:
             self.controlModifier = False
         super().keyReleaseEvent(event)
 
@@ -930,7 +998,7 @@ class textBlock:
 
 class textCell:
     def __init__(self, ch = ''):
-        self.char = ch
+        self.char :str = ch
 
 
 class TextCursor:
@@ -955,7 +1023,7 @@ class TextCursor:
         return prevRect 
 
     def document(self) -> textDocument: return self._doc
-    def block(self) -> textBlock:return self._doc.visibleBlocks()[self.visibleCoord().row()]
+    def block(self) -> textBlock:return self._doc.findBlockByVisibleNumber(self.visibleCoord().row())
 
     def Coord(self)        : return self._coord
     def visibleCoord(self) : return self._coord.visibleCoord()
@@ -1024,7 +1092,7 @@ class TextCursor:
         else:
             if self.visibleCoord().row() > 0:
                 row = self.visibleCoord().row() - 1
-                col = self._doc.findBlockByNumber(row).totalCharacters()
+                col = self._doc.findBlockByVisibleNumber(row).totalCharacters()
                 self._coord.set_Visible_Row(row)
                 self._coord.setCol(col)
                 self.sync_Stored_Coord()
@@ -1035,7 +1103,7 @@ class TextCursor:
         self._edit.resetCursor()
 
     def navRight(self, Anchor = False):
-        if self.visibleCoord().col() < self._doc.findBlockByNumber(self.visibleCoord().row()).totalCharacters():
+        if self.visibleCoord().col() < self._doc.findBlockByVisibleNumber(self.visibleCoord().row()).totalCharacters():
             row = self.visibleCoord().row()
             col = self.visibleCoord().col() + 1
             self._coord.setCol(col)
@@ -1058,7 +1126,7 @@ class TextCursor:
         if self.visibleCoord().row() > 0:
             row = self.visibleCoord().row() - 1
             self._coord.set_Visible_Row(row)
-            strLength = self._doc.findBlockByNumber(self.visibleCoord().row()).totalCharacters()
+            strLength = self._doc.findBlockByVisibleNumber(self.visibleCoord().row()).totalCharacters()
             col = min(strLength, self.storedCoord().visibleCoord().col())
             self._coord.setCol(col)
         else:
@@ -1074,15 +1142,15 @@ class TextCursor:
         self._edit.resetCursor()
 
     def navDn(self, Anchor = False):
-        if self.visibleCoord().row() < self._doc.totalBlocks() - 1:
+        if self.visibleCoord().row() < self._doc.totalVisibleBlocks() - 1:
             row = self.visibleCoord().row() + 1
             self._coord.set_Visible_Row(row)
-            strLength = self._doc.findBlockByNumber(self.visibleCoord().row()).totalCharacters()
+            strLength = self._doc.findBlockByVisibleNumber(self.visibleCoord().row()).totalCharacters()
             col = min(strLength, self.storedCoord().visibleCoord().col())
             self._coord.setCol(col)
         else:
             row = self.visibleCoord().row()
-            col = self._doc.findBlockByNumber(self._doc.totalBlocks() - 1).totalCharacters()
+            col = self._doc.findBlockByNumber(self._doc.totalVisibleBlocks() - 1).totalCharacters()
             self._coord.setCol(col)
             self.sync_Stored_Coord()
 
@@ -1195,14 +1263,9 @@ class TextCursor:
     def selection(self) -> textSelection:
         return self._selection
 
-    def hasSelection(self) -> bool:
-        return self._selection.hasSelection()
-
-    def selectionStart(self) -> pairedPosition:
-        return self._selection.selectionStart()
-
-    def selectionStop(self) -> pairedPosition:
-        return self._selection.selectionStop()
+    def hasSelection(self) -> bool: return self._selection.hasSelection()
+    def selectionStart(self) -> pairedPosition: return self._selection.selectionStart()
+    def selectionStop(self)  -> pairedPosition: return self._selection.selectionStop()
 
     def selectedText(self) -> str | None:
         if self.hasSelection():
@@ -1265,6 +1328,7 @@ class pairedPosition:
     def document(self)      -> textDocument: return self._doc
     def visibleCoord(self)  -> textPosition: return self._visible
     def absoluteCoord(self) -> textPosition: return self._abslute
+    def col(self): return self._abslute.col()
 
     def set_Visible_Row(self, row):
         self.visibleCoord().setRow(row)
