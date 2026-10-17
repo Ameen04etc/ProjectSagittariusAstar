@@ -493,8 +493,10 @@ class textEdit(QWidget):
         block.setText(prevBlock.text()[col:])
         prevBlock.setText(prevBlock.text()[:col])
 
-        doc.blocks().insert(absLineNo, block)
-        doc.visibleBlocks().insert(visLineNo, block)
+        self.document().blocks().insert(absLineNo, block)
+        self.document().visibleBlocks().insert(visLineNo, block)
+        self.document().lineLog.insert(absLineNo, block.totalCharacters())
+        self.document().lineLog[absLineNo - 1] = col
 
         if enumerate: doc.reEnumerate()
 
@@ -504,12 +506,18 @@ class textEdit(QWidget):
 
     def insert(self, ch, moveRight = True):
         self.deleteSelection()
+        absoluteRow = self.textCursor().visibleCoord().row()
         block = self.document().visibleBlocks()[self.textCursor().visibleCoord().row()]
         col = self.textCursor().visibleCoord().col()
         block.setText(block.text()[:col] + ch + block.text()[col:])
 
         if moveRight:
-            self.textCursor().navRight()
+            length = len(ch)
+            if length == 1:
+                self.textCursor().navRight()
+            else:
+                self.textCursor().moveToCol(col + length)
+            self.document().lineLog[absoluteRow] += length
 
     def deleteLeft(self, position : textPosition | None = None):
         if not position:
@@ -520,17 +528,23 @@ class textEdit(QWidget):
             col = position.col()
 
         block = self.document().findBlockByVisibleNumber(row)
+        abs_row = self.document().visibleToAbsolute(row)
 
         if col > 0:
             block.setText(block.text()[:col - 1] + block.text()[col:])
+            self.document().lineLog[abs_row] -= 1
             self.textCursor().navLeft()
         elif row > 0:
             toAppend = self.document().findBlockByVisibleNumber(row).text()[:]
             self.textCursor().navLeft()
             self.document().findBlockByVisibleNumber(row - 1)._string += toAppend
-            abs_row = self.document().visibleToAbsolute(row)
+
             del self.document().visibleBlocks()[row]
             del self.document().blocks()[abs_row]
+
+            self.document().lineLog[abs_row - 1] += self.document().lineLog[abs_row]
+            del self.document().lineLog[abs_row]
+
             self.document().reEnumerate()
             self._maxScrollY -= self.cellH
             if self._maxScrollY < 0: self._maxScrollY = 0
@@ -550,12 +564,17 @@ class textEdit(QWidget):
 
         if col < blockLength:
             block.setText(block.text()[:col] + block.text()[(col + 1):])
+            self.document().lineLog[row] -= 1
         elif abs_row < len(self.document().blocks()) - 1:
             toAppend = block.next().text()[:]
             block._string += toAppend
             if row + 1 < len(self.document().visibleBlocks()):
                 del self.document().visibleBlocks()[row + 1]
             del self.document().blocks()[abs_row + 1]
+
+            self.document().lineLog[abs_row] += self.document().lineLog[abs_row + 1]
+            del self.document().lineLog[abs_row + 1]
+
             self.document().reEnumerate()
             self._maxScrollY -= self.cellH
             if self._maxScrollY < 0: self._maxScrollY = 0
@@ -572,14 +591,21 @@ class textEdit(QWidget):
             if startRow == stopRow:
                 block = self.document().blocks()[startRow]
                 block.setText(block.text()[:startCol] + block.text()[stopCol:])
+
+                nDel = stopCol - startCol
+                self.document().lineLog[startRow] -= nDel
             else:
+                self.document().lineLog[stopRow] -= stopCol
+                self.document().lineLog[startRow] = startCol + self.document().lineLog[stopRow] 
                 startBlock = self.document().blocks()[startRow]
                 stopBlock  = self.document().blocks()[stopRow]
                 visibleStart = self.textCursor().Coord().absoluteToVisible(startRow)
                 visibleStop  = self.textCursor().Coord().absoluteToVisible(stopRow)
                 startBlock.setText(startBlock.text()[:startCol] + stopBlock.text()[stopCol:])
-                del self.document().visibleBlocks()[visibleStart + 1:visibleStop + 1]
-                del self.document().blocks()[startRow + 1:stopRow + 1]
+                del self.document().visibleBlocks()[visibleStart + 1 : visibleStop + 1]
+                del self.document().blocks()[startRow + 1 : stopRow + 1]
+
+                del self.document().lineLog[startRow + 1 : stopRow + 1]
 
     def copySelection(self):
         if self.textCursor().hasSelection():
@@ -1098,6 +1124,8 @@ class textDocument:
         self._blocks   : list[textBlock] = [textBlock(self, 0)]
         self._visible  : list[textBlock] = [block for block in self._blocks]
         self._foldHead : list[textBlock] = []
+        self.lineLog   : list[int]       = [0]
+        self.longLine  : list[int]       = [0]
 
     def blocks(self): return self._blocks
     def totalBlocks(self): return len(self.blocks())
