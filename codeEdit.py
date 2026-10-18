@@ -415,6 +415,14 @@ class textEdit(QWidget):
         self.trippleClickEN = False
         self.quadClickEN = False
 
+    def maxScrollConfig(self):
+        self.longLine = max(self.document().lineLog)
+        maxScroll = (self.longLine + 2) * self.cellW - self.prevW
+
+        if self._maxScrollX != maxScroll:
+            self._maxScrollX = maxScroll
+            self.update()
+
     def document(self): return self._document
     def textCursor(self): return self._Cursor
 
@@ -472,8 +480,12 @@ class textEdit(QWidget):
     def bottomMargin(self): return self._bottomMargin
 
     def newLine(self, visLineNo = None, enumerate = True):
+        maxconfig = False
         cursor = self.textCursor()
         doc = self.document()
+
+        if cursor.block().totalCharacters() >= self.longLine:
+            maxconfig = True
 
         if visLineNo is None:
             visLineNo = cursor.visibleCoord().row() + 1
@@ -504,28 +516,53 @@ class textEdit(QWidget):
         self._maxScrollY += self.cellH
         self.update()
 
-    def insert(self, ch, moveRight = True):
-        self.deleteSelection()
-        absoluteRow = self.textCursor().visibleCoord().row()
-        block = self.document().visibleBlocks()[self.textCursor().visibleCoord().row()]
-        col = self.textCursor().visibleCoord().col()
-        block.setText(block.text()[:col] + ch + block.text()[col:])
+        if maxconfig:
+            QTimer.singleShot(100, self.maxScrollConfig)
 
+    def insert(self, text : str, absPosition : textPosition | None = None, moveRight = True):
+        maxConfig = False
+
+        if absPosition is None:
+            absoluteRow = self.textCursor().absoluteCoord().row()
+            col = self.textCursor().visibleCoord().col()
+        else:
+            absoluteRow = absPosition.row()
+            col = absPosition.col()
+
+        block = self.document().findBlockByNumber(absoluteRow)
+        if self.longLine <= block.totalCharacters():
+            maxConfig = True
+
+        block.setText(block.text()[:col] + text + block.text()[col:])
+
+        length = len(text)
         if moveRight:
-            length = len(ch)
             if length == 1:
                 self.textCursor().navRight()
             else:
                 self.textCursor().moveToCol(col + length)
-            self.document().lineLog[absoluteRow] += length
+        self.document().lineLog[absoluteRow] += length
 
-    def deleteLeft(self, position : textPosition | None = None):
-        if not position:
+        if self.document().lineLog[absoluteRow] > self.longLine:
+            self.longLine = self.document().lineLog[absoluteRow]
+            self._maxScrollX = (self.longLine + 2) * self.cellW - self.prevW
+            maxConfig = False
+        self.update()
+
+        if maxConfig:
+            QTimer.singleShot(100, self.maxScrollConfig)
+
+    def deleteLeft(self, visPosition : textPosition | None = None):
+        maxConfig = False
+        if self.longLine <= self.textCursor().block().totalCharacters():
+            maxConfig = True
+
+        if not visPosition:
             row = self.textCursor().visibleCoord().row()
             col = self.textCursor().visibleCoord().col()
         else:
-            row = position.row()
-            col = position.col()
+            row = visPosition.row()
+            col = visPosition.col()
 
         block = self.document().findBlockByVisibleNumber(row)
         abs_row = self.document().visibleToAbsolute(row)
@@ -545,12 +582,24 @@ class textEdit(QWidget):
             self.document().lineLog[abs_row - 1] += self.document().lineLog[abs_row]
             del self.document().lineLog[abs_row]
 
+            if self.document().lineLog[abs_row - 1] > self.longLine:
+                self.longLine = self.document().lineLog[abs_row - 1]
+                self._maxScrollX = (self.longLine + 2) * self.cellW - self.prevW
+                maxConfig = False
+
             self.document().reEnumerate()
             self._maxScrollY -= self.cellH
             if self._maxScrollY < 0: self._maxScrollY = 0
         self.update()
 
+        if maxConfig:
+            QTimer.singleShot(100, self.maxScrollConfig)
+
     def deleteRight(self, position : textPosition | None = None):
+        maxConfig = False
+        if self.longLine <= self.textCursor().block().totalCharacters():
+            maxConfig = True
+
         if not position:
             row = self.textCursor().visibleCoord().row()
             col = self.textCursor().visibleCoord().col()
@@ -575,12 +624,21 @@ class textEdit(QWidget):
             self.document().lineLog[abs_row] += self.document().lineLog[abs_row + 1]
             del self.document().lineLog[abs_row + 1]
 
+            if self.document().lineLog[abs_row] > self.longLine:
+                self.longLine = self.document().lineLog[abs_row]
+                self._maxScrollX = (self.longLine + 2) * self.cellW - self.prevW
+                maxConfig = False
+
             self.document().reEnumerate()
             self._maxScrollY -= self.cellH
             if self._maxScrollY < 0: self._maxScrollY = 0
         self.update()
 
+        if maxConfig:
+            QTimer.singleShot(100, self.maxScrollConfig)
+
     def deleteSelection(self):
+        maxconfig = False
         if self.textCursor().hasSelection():
             startRow = self.textCursor().selectionStart().absoluteCoord().row()
             startCol = self.textCursor().selectionStart().absoluteCoord().col()
@@ -590,11 +648,14 @@ class textEdit(QWidget):
             self.textCursor().selection().reset()
             if startRow == stopRow:
                 block = self.document().blocks()[startRow]
+                if block.totalCharacters() >= self.longLine:
+                    maxconfig = True
                 block.setText(block.text()[:startCol] + block.text()[stopCol:])
 
                 nDel = stopCol - startCol
                 self.document().lineLog[startRow] -= nDel
             else:
+                maxconfig = True
                 self.document().lineLog[stopRow] -= stopCol
                 self.document().lineLog[startRow] = startCol + self.document().lineLog[stopRow] 
                 startBlock = self.document().blocks()[startRow]
@@ -606,6 +667,9 @@ class textEdit(QWidget):
                 del self.document().blocks()[startRow + 1 : stopRow + 1]
 
                 del self.document().lineLog[startRow + 1 : stopRow + 1]
+
+            if maxconfig:
+                QTimer.singleShot(100, self.maxScrollConfig)
 
     def copySelection(self):
         if self.textCursor().hasSelection():
@@ -643,6 +707,52 @@ class textEdit(QWidget):
             y = self.mouseY + self._scrollY
             self.textCursor().moveTo(visRow = int(y / self.cellH), col = int(x / self.cellW + 1 / 2), scroll = False, Anchor = True)
             self.update()
+
+    def pasteText(self, text : str, absPosition : textPosition | None = None):
+        if absPosition is None:
+            row = self.textCursor().visibleCoord().row()
+            col = self.textCursor().visibleCoord().col()
+        else:
+            print("else")
+            row = self.document().absoluteToVisible(absPosition.row())
+            col = absPosition.col()
+        nLine = 0
+        lines = text.split('\n')
+        totalLines = len(lines)
+
+        for i, line in enumerate(reversed(lines)):
+            if line:
+                self.insert(text = line, absPosition = absPosition, moveRight=False)
+
+            if i < totalLines - 1:
+                nLine += 1
+                if nLine > 500:
+                    nLine = 0
+                    self.update()
+
+                self.newLine(visLineNo=row, enumerate=False)
+                self.textCursor().navBlockEnd()
+                self.textCursor().navUp()
+                self.textCursor().moveToCol(col)
+
+        self.textCursor().navBlockEnd()
+        self.textCursor().moveToCol(col)
+        self.document().reEnumerate()
+
+        nRows = text.count('\n')
+        if nRows > 0:
+            self.textCursor().Coord().setCol(0)
+
+        lastNewlineIdx = text.rfind('\n')
+        if lastNewlineIdx == -1:
+            nCols = len(text)
+        else:
+            nCols = len(text) - 1 - lastNewlineIdx
+        print(row + nRows)
+        self.textCursor().Coord().set_Visible_Row(row + nRows)
+        self.textCursor().Coord().setCol(col + nCols)
+
+        self.update()
 
     def jumpLeft(self, Anchor = False):
         col = self.textCursor().Coord().col()
@@ -777,47 +887,7 @@ class textEdit(QWidget):
                 text = QGuiApplication.clipboard().text()
                 if self.textCursor().hasSelection():
                     self.deleteSelection()
-                row = self.textCursor().visibleCoord().row()
-                nLine = 0
-                lines = text.split('\n')
-                total_lines = len(lines)
-
-                for i, line in enumerate(reversed(lines)):
-                    if line:
-                        self.insert(line, moveRight=False)
-
-                    # Trigger newline logic for every separator (i.e., between lines)
-                    if i < total_lines - 1:
-                        nLine += 1
-                        if nLine > 500:
-                            nLine = 0
-                            self.update()
-                        col = self.textCursor().visibleCoord().col()
-                        self.newLine(visLineNo=row, enumerate=False)
-                        self.textCursor().navBlockEnd()
-                        self.textCursor().navUp()
-                        self.textCursor().moveToCol(col)
-
-                col = self.textCursor().visibleCoord().col()
-                self.textCursor().navBlockEnd()
-                self.textCursor().moveToCol(col)
-                self.document().reEnumerate()
-
-                nRows = text.count('\n')
-                if nRows > 0:
-                    self.textCursor().Coord().setCol(0)
-
-                lastNewlineIdx = text.rfind('\n')
-                if lastNewlineIdx == -1:
-                    nCols = len(text)
-                else:
-                    nCols = len(text) - 1 - lastNewlineIdx
-                row = self.textCursor().visibleCoord().row()
-                col = self.textCursor().visibleCoord().col()
-                self.textCursor().Coord().set_Visible_Row(row + nRows)
-                self.textCursor().Coord().setCol(col + nCols)
-
-                self.update()
+                self.pasteText(text = text)
             elif event.key() == Qt.Key.Key_A:
                 self.textCursor().navToStart(scroll = False)
                 self.textCursor().navToEnd(scroll = False, Anchor = True)
@@ -876,12 +946,14 @@ class textEdit(QWidget):
 
         elif event.key() == Qt.Key.Key_Tab:
             self.insert('    ')
+            self.resetCursor()
 
         elif event.key() == Qt.Key.Key_CapsLock:
             pass
 
         else:
             text = event.text()
+            self.deleteSelection()
             self.insert(text)
             self.update()
         super().keyPressEvent(event)
@@ -894,7 +966,6 @@ class textEdit(QWidget):
         super().keyReleaseEvent(event)
 
     def mousePressEvent(self, event : QMouseEvent):
-        print("pressed")
         if self.trippleClickEN:
             self.trippleClicked = True
             self.textCursor().navBlockStart()
@@ -908,6 +979,7 @@ class textEdit(QWidget):
         self.mousePressed = True
         if event.button() == Qt.RightButton:
             self.showReason = True
+            print(self.document().lineLog)
         self.mouseX = event.position().x()
         self.mouseY = event.position().y()
         x = self.mouseX + self._scrollX - self.leftMargin()
@@ -1061,10 +1133,14 @@ class textEdit(QWidget):
         self._scrollX -= Xdelta
         self._scrollY -= Ydelta
 
-        if self._scrollX < 0: self._scrollX = 0
-        if self._scrollX > self._maxScrollX: self._scrollX = self._maxScrollX
-        if self._scrollY < 0: self._scrollY = 0
-        if self._scrollY > self._maxScrollY: self._scrollY = self._maxScrollY
+        if self._scrollX > self._maxScrollX:
+            self._scrollX = self._maxScrollX
+        if self._scrollX < 0:
+            self._scrollX = 0
+        if self._scrollY > self._maxScrollY:
+            self._scrollY = self._maxScrollY
+        if self._scrollY < 0:
+            self._scrollY = 0
 
         Xdelta = prevX - self._scrollX
         Ydelta = prevY - self._scrollY
@@ -1087,8 +1163,6 @@ class textEdit(QWidget):
 
             self.scroll(Xdelta, Ydelta)
 
-        # self.scroll(0, -10)
-        # self.update()
         event.accept()
 
     def resizeEvent(self, event):
@@ -1116,6 +1190,39 @@ class textEdit(QWidget):
     def focusOutEvent(self, event):
         self.update()
         super().focusOutEvent(event)
+
+
+class command:
+    def undo(self, document : textDocument):
+        raise NotImplementedError
+
+    def redo(self, document : textDocument):
+        raise NotImplementedError
+
+
+class InsertText(command):
+    def __init__(self, editor : textEdit, document : textDocument, absPosition : tuple, text : str):
+        super().__init__()
+        self.editor   = editor
+        self.document = document
+        self.position = absPosition
+        self.text     = text
+
+    def undo(self):
+        nDel = len(self.text)
+        visRow = self.document.absoluteToVisible(self.position[0])
+        visCol = self.position[1]
+        visPosition = textPosition(row = visRow, col = visCol)
+        for _ in range(nDel):
+            self.editor.deleteRight(position = visPosition)
+
+    def redo(self):
+        absPosition = textPosition(row = self.position[0], col = self.position[1])
+        self.editor.pasteText(text = self.text, absPosition = absPosition)
+
+
+class UndoRedoManager:
+    pass
 
 
 class textDocument:
