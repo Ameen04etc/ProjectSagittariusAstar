@@ -147,6 +147,12 @@ class textEdit(QWidget):
         self.mouseX = 0
         self.mouseY = 0
 
+        self.UndoRedoStack = UndoRedoManager()
+        self.commandGroup  = []
+        self.UndRedTimer   = QTimer(self)
+        self.UndRedTimer.setSingleShot(True)
+        self.UndRedTimer.timeout.connect(self.commandDispatch)
+
         self.prevH = self.height()
         self.prevW = self.width()
 
@@ -479,7 +485,7 @@ class textEdit(QWidget):
     def rightMargin(self) : return self._rightMargin
     def bottomMargin(self): return self._bottomMargin
 
-    def newLine(self, visLineNo = None, enumerate = True):
+    def newLine(self, visLineNo = None, enumerate = True, dispatch = False):
         maxconfig = False
         cursor = self.textCursor()
         doc = self.document()
@@ -511,6 +517,11 @@ class textEdit(QWidget):
         self.document().lineLog[absLineNo - 1] = col
 
         if enumerate: doc.reEnumerate()
+
+        if dispatch:
+            command = newLine(self, doc, (absLineNo, col))
+            self.commandGroup.append(command)
+            self.commandDispatch()
 
         self.textCursor().moveTo(visLineNo, 0)
         self._maxScrollY += self.cellH
@@ -552,7 +563,7 @@ class textEdit(QWidget):
         if maxConfig:
             QTimer.singleShot(100, self.maxScrollConfig)
 
-    def deleteLeft(self, visPosition : textPosition | None = None):
+    def deleteLeft(self, visPosition : textPosition | None = None, dispatch = False):
         maxConfig = False
         if self.longLine <= self.textCursor().block().totalCharacters():
             maxConfig = True
@@ -568,10 +579,22 @@ class textEdit(QWidget):
         abs_row = self.document().visibleToAbsolute(row)
 
         if col > 0:
+            if dispatch:
+                ch = block.text()[col - 1]
+                command = deleteText(self, self.document(), (abs_row, col - 1), ch)
+                self.commandGroup.append(command)
+                self.UndRedTimer.start(500)
+
             block.setText(block.text()[:col - 1] + block.text()[col:])
             self.document().lineLog[abs_row] -= 1
             self.textCursor().navLeft()
         elif row > 0:
+            if dispatch:
+                self.commandDispatch()
+                command = deleteLine(self, self.document(), abs_row)
+                self.commandGroup.append(command)
+                self.commandDispatch()
+
             toAppend = self.document().findBlockByVisibleNumber(row).text()[:]
             self.textCursor().navLeft()
             self.document().findBlockByVisibleNumber(row - 1)._string += toAppend
@@ -595,7 +618,7 @@ class textEdit(QWidget):
         if maxConfig:
             QTimer.singleShot(100, self.maxScrollConfig)
 
-    def deleteRight(self, position : textPosition | None = None):
+    def deleteRight(self, position : textPosition | None = None, dispatch = False):
         maxConfig = False
         if self.longLine <= self.textCursor().block().totalCharacters():
             maxConfig = True
@@ -612,9 +635,21 @@ class textEdit(QWidget):
         abs_row = self.document().visibleToAbsolute(row)
 
         if col < blockLength:
+            if dispatch:
+                ch = block.text()[col]
+                command = deleteText(self, self.document(), (abs_row, col), ch)
+                self.commandGroup.append(command)
+                self.UndRedTimer.start(500)
+
             block.setText(block.text()[:col] + block.text()[(col + 1):])
             self.document().lineLog[row] -= 1
         elif abs_row < len(self.document().blocks()) - 1:
+            if dispatch:
+                self.commandDispatch()
+                command = deleteLine(self, self.document(), abs_row + 1)
+                self.commandGroup.append(command)
+                self.commandDispatch()
+
             toAppend = block.next().text()[:]
             block._string += toAppend
             if row + 1 < len(self.document().visibleBlocks()):
@@ -713,7 +748,6 @@ class textEdit(QWidget):
             row = self.textCursor().visibleCoord().row()
             col = self.textCursor().visibleCoord().col()
         else:
-            print("else")
             row = self.document().absoluteToVisible(absPosition.row())
             col = absPosition.col()
         nLine = 0
@@ -742,13 +776,14 @@ class textEdit(QWidget):
         nRows = text.count('\n')
         if nRows > 0:
             self.textCursor().Coord().setCol(0)
+            col = 0
 
         lastNewlineIdx = text.rfind('\n')
         if lastNewlineIdx == -1:
             nCols = len(text)
         else:
             nCols = len(text) - 1 - lastNewlineIdx
-        print(row + nRows)
+
         self.textCursor().Coord().set_Visible_Row(row + nRows)
         self.textCursor().Coord().setCol(col + nCols)
 
@@ -827,6 +862,14 @@ class textEdit(QWidget):
         self.update()
         self.resetCursor()
 
+    def commandDispatch(self):
+        if not self.commandGroup:
+            return
+
+        self.UndoRedoStack.undoStack.append(self.commandGroup.copy())
+        self.commandGroup.clear()
+        self.UndoRedoStack.redoStack.clear()
+
     def keyPressEvent(self, event : QKeyEvent):
         if self.controlModifier:
             if event.key() == Qt.Key.Key_Shift:
@@ -904,6 +947,11 @@ class textEdit(QWidget):
             elif event.key() == Qt.Key.Key_Delete:
                 self.jumpRight(Anchor = True)
                 self.deleteSelection()
+            elif event.key() == Qt.Key.Key_Z:
+                self.commandDispatch()
+                self.UndoRedoStack.undo()
+            elif event.key() == Qt.Key.Key_Y:
+                self.UndoRedoStack.redo()
 
         elif event.key() == Qt.Key.Key_Left:
             if self.textCursor().hasSelection() and not self.shiftModifier:
@@ -928,15 +976,34 @@ class textEdit(QWidget):
             self.textCursor().navDn(Anchor = self.shiftModifier)
 
         elif event.key() in {Qt.Key.Key_Return, Qt.Key.Key_Enter}:
-            self.newLine()
+            self.commandDispatch()
+            self.newLine(dispatch = True)
 
         elif event.key() == Qt.Key.Key_Backspace:
-            if self.textCursor().hasSelection(): self.deleteSelection()
-            else: self.deleteLeft()
+            if self.textCursor().hasSelection():
+                self.commandDispatch()
+                text = self.textCursor().selectedText()
+                absPosition = (self.textCursor().selectionStart().absoluteCoord().row(), self.textCursor().selectionStart().col())
+                command = deleteText(editor = self, document = self.document(), absPosition = absPosition, text = text)
+                self.commandGroup.append(command)
+                self.commandDispatch()
+                self.deleteSelection()
+            else:
+                if self.commandGroup and not isinstance(self.commandGroup[-1], deleteText): self.commandDispatch()
+                self.deleteLeft(dispatch = True)
 
         elif event.key() == Qt.Key.Key_Delete:
-            if self.textCursor().hasSelection(): self.deleteSelection()
-            else: self.deleteRight()
+            if self.textCursor().hasSelection():
+                self.commandDispatch()
+                text = self.textCursor().selectedText()
+                absPosition = (self.textCursor().selectionStart().absoluteCoord().row(), self.textCursor().selectionStart().col())
+                command = deleteText(editor = self, document = self.document(), absPosition = absPosition, text = text)
+                self.commandGroup.append(command)
+                self.commandDispatch()
+                self.deleteSelection()
+            else:
+                if self.commandGroup and not isinstance(self.commandGroup[-1], deleteText): self.commandDispatch()
+                self.deleteRight(dispatch = True)
 
         elif event.key() == Qt.Key.Key_Shift:
             self.shiftModifier = True
@@ -945,7 +1012,14 @@ class textEdit(QWidget):
             self.controlModifier = True
 
         elif event.key() == Qt.Key.Key_Tab:
-            self.insert('    ')
+            tab = '    '
+            self.commandDispatch()
+            absPosition = (self.textCursor().absoluteCoord().row(), self.textCursor().Coord().col())
+            command = insertText(editor = self, document = self.document(), absPosition = absPosition, text = tab)
+            self.commandGroup.append(command)
+            self.commandDispatch()
+
+            self.insert(tab)
             self.resetCursor()
 
         elif event.key() == Qt.Key.Key_CapsLock:
@@ -954,6 +1028,15 @@ class textEdit(QWidget):
         else:
             text = event.text()
             self.deleteSelection()
+
+            if self.commandGroup and not isinstance(self.commandGroup[-1], insertText):
+                self.commandDispatch()
+
+            absPosition = (self.textCursor().absoluteCoord().row(), self.textCursor().Coord().col())
+            command = insertText(editor = self, document = self.document(), absPosition = absPosition, text = text)
+            self.commandGroup.append(command)
+            self.UndRedTimer.start(500)
+
             self.insert(text)
             self.update()
         super().keyPressEvent(event)
@@ -1200,7 +1283,7 @@ class command:
         raise NotImplementedError
 
 
-class InsertText(command):
+class insertText(command):
     def __init__(self, editor : textEdit, document : textDocument, absPosition : tuple, text : str):
         super().__init__()
         self.editor   = editor
@@ -1213,6 +1296,7 @@ class InsertText(command):
         visRow = self.document.absoluteToVisible(self.position[0])
         visCol = self.position[1]
         visPosition = textPosition(row = visRow, col = visCol)
+        self.editor.textCursor().moveTo(visRow = visRow, col = visCol)
         for _ in range(nDel):
             self.editor.deleteRight(position = visPosition)
 
@@ -1221,8 +1305,184 @@ class InsertText(command):
         self.editor.pasteText(text = self.text, absPosition = absPosition)
 
 
+class deleteText(command):
+    def __init__(self, editor : textEdit, document : textDocument, absPosition : tuple, text : str):
+        super().__init()
+        self.editor   = editor
+        self.document = document
+        self.position = absPosition
+        self.text     = text
+
+    def undo(self):
+        absPosition = textPosition(row = self.position[0], col = self.position[1])
+        self.editor.pasteText(text = self.text, absPosition = absPosition)
+
+    def redo(self):
+        nDel = len(self.text)
+        visRow = self.document.absoluteToVisible(self.position[0])
+        visCol = self.position[1]
+        visPosition = textPosition(row = visRow, col = visCol)
+        for _ in range(nDel):
+            self.editor.deleteRight(position = visPosition)
+
+
+class cutText(command):
+    def __init__(self, editor : textEdit, document : textDocument, absPosition : tuple, text : str):
+        super().__init__()
+        self.editor   = editor
+        self.document = document
+        self.position = absPosition
+        self.text     = text
+        self.config()
+
+    def undo(self):
+        absPosition = textPosition(row = self.position[0], col = self.position[1])
+        self.editor.pasteText(text = self.text, absPosition = absPosition)
+        cursor = self.editor.textCursor()
+        cursor.moveTo(visRow = self.start_Vis_Row, col = self.position[1])
+        cursor.moveTo(visRow = self.end_Vis_Row, col = self.endCol, Anchor = True)
+
+    def redo(self):
+        cursor = self.editor.textCursor()
+        cursor.moveTo(visRow = self.start_Vis_Row, col = self.position[1])
+        cursor.moveTo(visRow = self.end_Vis_Row, col = self.endCol, Anchor = True)
+        self.editor.copySelection()
+        self.editor.deleteSelection()
+
+    def config(self):
+        cursor = self.editor.textCursor()
+        self.start_Vis_Row = self.document.absoluteToVisible(self.position[0])
+        visCol = self.position[1]
+
+        nRows = self.text.count('\n')
+        if nRows > 0:
+            cursor.Coord().setCol(0)
+            visCol = 0
+        lastNewlineIdx = self.text.rfind('\n')
+        if lastNewlineIdx == -1:
+            nCols = len(self.text)
+        else:
+            nCols = len(self.text) - 1 - lastNewlineIdx
+        self.end_Vis_Row = self.start_Vis_Row + nRows
+        self.endCol = visCol + nCols
+
+
+class pasteText(command):
+    def __init__(self, editor : textEdit, document : textDocument, absPosition : tuple, text : str):
+        super().__init__()
+        self.editor   = editor
+        self.document = document
+        self.position = absPosition
+        self.text     = text
+        self.config()
+
+    def undo(self):
+        cursor = self.editor.textCursor()
+        cursor.moveTo(visRow = self.start_Vis_Row, col = self.position[1])
+        cursor.moveTo(visRow = self.end_Vis_Row, col = self.endCol, Anchor = True)
+        self.editor.copySelection()
+        self.editor.deleteSelection()
+
+    def redo(self):
+        absPosition = textPosition(row = self.position[0], col = self.position[1])
+        self.editor.pasteText(text = self.text, absPosition = absPosition)
+        cursor = self.editor.textCursor()
+        cursor.moveTo(visRow = self.start_Vis_Row, col = self.position[1])
+        cursor.moveTo(visRow = self.end_Vis_Row, col = self.endCol, Anchor = True)
+
+    def config(self):
+        cursor = self.editor.textCursor()
+        self.start_Vis_Row = self.document.absoluteToVisible(self.position[0])
+        visCol = self.position[1]
+
+        nRows = self.text.count('\n')
+        if nRows > 0:
+            cursor.Coord().setCol(0)
+            visCol = 0
+        lastNewlineIdx = self.text.rfind('\n')
+        if lastNewlineIdx == -1:
+            nCols = len(self.text)
+        else:
+            nCols = len(self.text) - 1 - lastNewlineIdx
+        self.end_Vis_Row = self.start_Vis_Row + nRows
+        self.endCol = visCol + nCols
+
+
+class newLine(command):
+    def __init__(self, editor : textEdit, document : textDocument, absPosition : tuple):
+        super().__init__()
+        self.editor   = editor
+        self.document = document
+        self.absRow   = absPosition[0]
+        self.visRow   = self.document.absoluteToVisible(self.absRow)
+        self.col      = absPosition[1]
+
+    def undo(self):
+        block = self.document.findBlockByNumber(self.absRow)
+        prevBlock = self.document.findBlockByNumber(self.absRow - 1)
+        prevBlock.setText(prevBlock.text() + block.text())
+        del self.document.blocks()[self.absRow]
+        del self.document.visibleBlocks()[self.visRow]
+
+    def redo(self):
+        prevBlock = self.document.findBlockByNumber(self.absRow - 1)
+        block = textBlock()
+        block.setText(prevBlock.text()[self.col:])
+        prevBlock.setText(prevBlock.text()[:self.col])
+        self.document.blocks().insert(self.absRow, block)
+        self.document.visibleBlocks().insert(self.visRow, block)
+
+
+class deleteLine(command):
+    def __init__(self, editor : textEdit, document : textDocument, absRow):
+        super().__init__()
+        self.editor   = editor
+        self.document = document
+        self.absRow   = absRow
+        self.visRow   = self.document.absoluteToVisible(self.absRow)
+        self.col      = self.document.findBlockByNumber(absRow - 1).totalCharacters()
+
+    def undo(self):
+        prevBlock = self.document.findBlockByNumber(self.absRow - 1)
+        block = textBlock()
+        block.setText(prevBlock.text()[self.col:])
+        prevBlock.setText(prevBlock.text()[:self.col])
+        self.document.blocks().insert(self.absRow, block)
+        self.document.visibleBlocks().insert(self.visRow, block)
+
+    def redo(self):
+        block = self.document.findBlockByNumber(self.absRow)
+        prevBlock = self.document.findBlockByNumber(self.absRow - 1)
+        prevBlock.setText(prevBlock.text() + block.text())
+        del self.document.blocks()[self.absRow]
+        del self.document.visibleBlocks()[self.visRow]
+
+
 class UndoRedoManager:
-    pass
+    def __init__(self):
+        self.undoStack : list[list[command]] = []
+        self.redoStack : list[list[command]] = []
+
+    def undo(self):
+        if not self.undoStack:
+            return
+
+        commandGroup = self.undoStack.pop()
+        idx = len(commandGroup) - 1
+        while idx >= 0:
+            command = commandGroup[idx]
+            command.undo()
+            idx -= 1
+        self.redoStack.append(commandGroup)
+
+    def redo(self):
+        if not self.redoStack:
+            return
+
+        commandGroup = self.redoStack.pop()
+        for command in commandGroup:
+            command.redo()
+        self.undoStack.append(commandGroup)
 
 
 class textDocument:
