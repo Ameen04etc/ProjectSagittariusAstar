@@ -70,7 +70,7 @@ class WorkSpaceRegistry:
         ".git",
         ".hg",
     }
-    
+
 
     def __init__(self):
         self.workSpace : Dict[Path, List[Path]] = {}
@@ -333,7 +333,7 @@ class LSPClient(QObject):
     def handleNotification(self, message):
         # print("Notification:\r\n", message, "\r\n\r\n")
         if message["method"] == "textDocument/publishDiagnostics":
-            print(message)
+            # print(message)
             self.handleDiagnostics(message)
 
     def handleDiagnostics(self, message):
@@ -347,14 +347,14 @@ class LSPClient(QObject):
         uri     = params["uri"]
         version = params["version"]
         diagnostics = params["diagnostics"]
-        print(version, uri)
+        # print(version, uri)
 
         self.diagnosticsReady.emit(uri, version, diagnostics)
 
-        for i, diagnostic in enumerate(diagnostics):
-            k = i % 4
-            print(colorMap[k], diagnostic)
-            print(f"{RESET}")
+        # for i, diagnostic in enumerate(diagnostics):
+        #     k = i % 4
+        #     print(colorMap[k], diagnostic)
+        #     print(f"{RESET}")
         pass
 
     def readError(self):

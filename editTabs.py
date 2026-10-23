@@ -44,15 +44,15 @@ class editTabs(QTabWidget):
         self.newTab()
 
     def routeDiagnostics(self, uri : str, version : int, diagnostics : dict):
-        print(diagnostics)
+        # print(diagnostics)
         for index in range(self.count()):
             editor = self.widget(index).findChild(MasterEditor)
-            print("uri = ", editor.editor.documentURI)
+            # print("uri = ", editor.editor.documentURI)
             uri = unquote(uri).lower()
             docURI = unquote(editor.editor.documentURI).lower()
-            print(docURI == uri)
+            # print(docURI == uri)
             if editor and docURI == uri:
-                print("success")
+                # print("success")
                 editor.editor.diagnose(uri = uri, version = version, diagnostics = diagnostics)
 
     def closeTab(self, index):

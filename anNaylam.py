@@ -2337,7 +2337,8 @@ class CodeEditor(QPlainTextEdit):
         #     print(stackInput)
         # print("------")
         if e.button() == Qt.RightButton:
-            self.Language.syntax.printSyntax()
+            # self.Language.syntax.printSyntax()
+            print("=========================")
         node = self.fetchCursorNode(position = self.textCursor().position())
         # self.Language.syntax.printSyntax(node = node)
         # print(self.document().characterCount())
@@ -2921,7 +2922,7 @@ class syntaxHighlighter(QSyntaxHighlighter):
         blockNumber = self.currentBlock().blockNumber()
         blockPosition = self.currentBlock().position()
 
-        # print("BLOCK NO =", blockNumber)
+        print("BLOCK NO =", blockNumber)
 
         line_bytes = text.encode("utf-8")
 

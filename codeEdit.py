@@ -59,6 +59,29 @@ QT_COLORMAP = {
     3: Qt.blue
 }
 
+PAIR_BRACE = {
+    '(' : ')',
+    '{' : '}',
+    '[' : ']',
+    '"' : '"',
+    "'" : "'"
+}
+
+OPEN_BRACES = set(PAIR_BRACE.keys())
+CLOSE_BRACES = set(PAIR_BRACE.values())
+
+
+def stringGroup(ch : str):
+    if ch.isalnum() or ch == '_':
+        return 1
+    if ch == ' ' or ch == ',':
+        return 2
+    if ch in OPEN_BRACES:
+        return 3
+    if ch in CLOSE_BRACES:
+        return 4
+    return 5
+
 
 def angle(v1 : tuple, v2 : tuple) -> float:
     arr1 = np.array(v1)
@@ -71,9 +94,9 @@ def angle(v1 : tuple, v2 : tuple) -> float:
 
     if mag1 == 0 or mag2 == 0:
         return 0.0
-        
+
     cos_theta = dot / (mag1 * mag2)
-    
+
     # Clip the value to [-1.0, 1.0] to prevent math domain errors
     # caused by tiny floating-point precision inaccuracies
     cos_theta = np.clip(cos_theta, -1.0, 1.0)
@@ -87,12 +110,19 @@ class CoordinateType(Enum):
     ABSOLUTE = auto()
 
 
+class dummyCursorType(Enum):
+    UNASSIGNED = auto()
+    TRANSFER = auto()
+
+
 class textEdit(QWidget):
 
     def __init__(self, parent):
         super().__init__(parent)
         self._document = textDocument()
         self._Cursor = TextCursor(editor = self, doc = self.document())
+        self.extraCursors : list[dummyCursor] = []
+        self.editFlag = False
 
         self.Font = QFont()
         self.Font.setFamilies(["Consolas", "Courier New"])
@@ -134,6 +164,7 @@ class textEdit(QWidget):
 
         self.mousePressed = False
         self.mouseMoved = False
+        self.selectTransfer = False
         self.trippleClickEN = False
         self.quadClickEN = False
         self.doubleClicked = False
@@ -255,6 +286,17 @@ class textEdit(QWidget):
             y = self.textCursor().visibleCoord().row() * self.cellH + self.topMargin() - self._scrollY
             if x == 0: x = 1
             painter.drawLine(x, y + 1.2, x, y + self.cellH - 1.2)
+
+        if self.hasFocus():
+            for curs in self.extraCursors:
+                if curs.type == dummyCursorType.TRANSFER and self.selectTransfer:
+                    cursorPen = QPen(QColor(200, 200, 200, 255), self.cursWidth, Qt.DashLine)
+                    painter.setPen(cursorPen)
+                    x = curs.visibleCoord().col() * self.cellW + self.leftMargin() - self._scrollX
+                    y = curs.visibleCoord().row() * self.cellH + self.topMargin() - self._scrollY
+                    if x == 0: x = 1
+                    painter.drawLine(x, y + 1.2, x, y + self.cellH - 1.2)
+
 
         self.toggle = False
         painter.fillRect(QRect(0, 0, self.leftMargin(), self.height()), QColor(18, 19, 20))
@@ -530,15 +572,19 @@ class textEdit(QWidget):
         if maxconfig:
             QTimer.singleShot(100, self.maxScrollConfig)
 
-    def insert(self, text : str, absPosition : textPosition | None = None, moveRight = True):
+    def insert(self, text : str, absPosition : TextCursor | textPosition | None = None, moveRight = True):
         maxConfig = False
 
         if absPosition is None:
             absoluteRow = self.textCursor().absoluteCoord().row()
-            col = self.textCursor().visibleCoord().col()
+            col = self.textCursor().Coord().col()
         else:
-            absoluteRow = absPosition.row()
-            col = absPosition.col()
+            if isinstance(absPosition, textPosition):
+                absoluteRow = absPosition.row()
+                col = absPosition.col()
+            elif isinstance(absPosition, TextCursor):
+                absoluteRow = absPosition.absoluteCoord().row()
+                col = absPosition.Coord().col()
 
         block = self.document().findBlockByNumber(absoluteRow)
         if self.longLine <= block.totalCharacters():
@@ -672,9 +718,11 @@ class textEdit(QWidget):
         if maxConfig:
             QTimer.singleShot(100, self.maxScrollConfig)
 
-    def deleteSelection(self):
+    def deleteSelection(self, dispatch = False):
         maxconfig = False
         if self.textCursor().hasSelection():
+            if dispatch:
+                text = self.textCursor().selectedText()
             startRow = self.textCursor().selectionStart().absoluteCoord().row()
             startCol = self.textCursor().selectionStart().absoluteCoord().col()
             stopRow  = self.textCursor().selectionStop().absoluteCoord().row()
@@ -710,6 +758,13 @@ class textEdit(QWidget):
 
             if maxconfig:
                 QTimer.singleShot(100, self.maxScrollConfig)
+
+            if dispatch:
+                self.commandDispatch()
+                absPosition = (self.textCursor().absoluteCoord().row(), self.textCursor().Coord().col())
+                command = deleteText(editor = self, document = self.document(), absPosition = absPosition, selection = True, text = text)
+                self.commandGroup.append(command)
+                self.commandDispatch()
 
     def copySelection(self):
         if self.textCursor().hasSelection():
@@ -752,13 +807,26 @@ class textEdit(QWidget):
             self.textCursor().moveTo(visRow = int(y / self.cellH), col = int(x / self.cellW + 1 / 2), scroll = False, Anchor = True)
             self.update()
 
-    def pasteText(self, text : str, absPosition : textPosition | None = None, Anchor = False):
+    def pasteText(self, text : str, absPosition : TextCursor | textPosition | None = None, Anchor = False, dispatch = False):
         if absPosition is None:
             row = self.textCursor().visibleCoord().row()
             col = self.textCursor().visibleCoord().col()
-        else:
+        elif isinstance(absPosition, textPosition):
             row = self.document().absoluteToVisible(absPosition.row())
             col = absPosition.col()
+        elif isinstance(absPosition, TextCursor):
+            row = absPosition.visibleCoord().row()
+            col = absPosition.Coord().col()
+
+        if dispatch:
+            self.commandDispatch()
+            if absPosition is None:
+                position = (self.textCursor().absoluteCoord().row(), self.textCursor().Coord().col())
+            elif isinstance(absPosition, textPosition):
+                position = (absPosition.row(), absPosition().col)
+            elif isinstance(absPosition, TextCursor):
+                position = (absPosition.absoluteCoord().row(), absPosition.Coord().col())
+
         nLine = 0
         lines = text.split('\n')
         totalLines = len(lines)
@@ -801,6 +869,11 @@ class textEdit(QWidget):
 
         self.update()
 
+        if dispatch:
+            command = pasteText(editor = self, document = self.document(), absPosition = position, text = text)
+            self.commandGroup.append(command)
+            self.commandDispatch()
+
     def jumpLeft(self, Anchor = False):
         col = self.textCursor().Coord().col()
         row = self.textCursor().absoluteCoord().row()
@@ -812,27 +885,25 @@ class textEdit(QWidget):
 
         block = self.document().findBlockByNumber(row)
         ch = block.text()[col - 1]
+        initGroup = stringGroup(ch)
+        initChar  = ch
 
-        if ch.isalpha() or ch.isdigit() or ch == '_':
-            while True:
-                col -= 1
-                if col < 0:
-                    col = 0
-                    break
-                ch = block.text()[col - 1]
-                if not (ch.isalpha() or ch.isdigit() or ch == '_'):
-                    break
-            self.textCursor().moveToCol(col = col, Anchor = Anchor)
-        elif ch ==' ':
-            while True:
-                col -= 1
-                if col < 0:
-                    col = 0
-                    break
-                ch = block.text()[col - 1]
-                if ch != ' ':
-                    break
-            self.textCursor().moveToCol(col = col, Anchor = Anchor)
+        while True:
+            col -= 1
+            if col < 0:
+                col = 0
+                break
+            ch = block.text()[col - 1]
+            if initGroup in {3, 4} and ch in {'"', "'"}:
+                continue
+            if initChar in {'"', "'"} and stringGroup(ch) in {3, 4}:
+                if ch not in {'"', "'"}:
+                    initGroup = stringGroup(ch)
+                    initChar = None
+                continue
+            if stringGroup(ch) != initGroup:
+                break
+        self.textCursor().moveToCol(col = col, Anchor = Anchor)
 
         self.update()
         self.resetCursor()
@@ -849,27 +920,25 @@ class textEdit(QWidget):
             return
 
         ch = block.text()[col]
+        initGroup = stringGroup(ch)
+        initChar  = ch
 
-        if ch.isalpha() or ch.isdigit() or ch == '_':
-            while True:
-                col += 1
-                if col >= blockLen:
-                    col = blockLen
-                    break
-                ch = block.text()[col]
-                if not (ch.isalpha() or ch.isdigit() or ch == '_'):
-                    break
-            self.textCursor().moveToCol(col = col, Anchor = Anchor)
-        elif ch == ' ':
-            while True:
-                col += 1
-                if col >= blockLen:
-                    col = blockLen
-                    break
-                ch = block.text()[col]
-                if ch != ' ':
-                    break
-            self.textCursor().moveToCol(col = col, Anchor = Anchor)
+        while True:
+            col += 1
+            if col >= blockLen:
+                col = blockLen
+                break
+            ch = block.text()[col]
+            if initGroup in {3, 4} and ch in {'"', "'"}:
+                continue
+            if initChar in {'"', "'"} and stringGroup(ch) in {3, 4}:
+                if ch not in {'"', "'"}:
+                    initGroup = stringGroup(ch)
+                    initChar = None
+                continue
+            if stringGroup(ch) != initGroup:
+                break
+        self.textCursor().moveToCol(col = col, Anchor = Anchor)
 
         self.update()
         self.resetCursor()
@@ -877,10 +946,20 @@ class textEdit(QWidget):
     def commandDispatch(self):
         if not self.commandGroup:
             return
+        if self.editFlag:
+            return
 
         self.UndoRedoStack.undoStack.append(self.commandGroup.copy())
         self.commandGroup.clear()
         self.UndoRedoStack.redoStack.clear()
+
+    def beginEdit(self):
+        self.commandDispatch()
+        self.editFlag = True
+
+    def endEdit(self):
+        self.editFlag = False
+        self.commandDispatch()
 
     def keyPressEvent(self, event : QKeyEvent):
         if self.controlModifier:
@@ -1131,7 +1210,17 @@ class textEdit(QWidget):
         self.mouseY = event.position().y()
         x = self.mouseX + self._scrollX - self.leftMargin()
         y = self.mouseY + self._scrollY - self.topMargin()
-        self.textCursor().moveTo(visRow = int(y / self.cellH), col = round(x / self.cellW), scroll = False)
+        row = int(y / self.cellH)
+        col = round(x / self.cellW)
+        if self.textCursor().hasSelection():
+            start = (self.textCursor().selectionStart().absoluteCoord().row(), self.textCursor().selectionStart().col())
+            stop = (self.textCursor().selectionStop().absoluteCoord().row(), self.textCursor().selectionStop().col())
+            if start <= (row , col) <= stop:
+                self.selectTransfer = True
+                return
+            else:
+                self.textCursor().moveTo(visRow = row, col = col, scroll = False)
+        self.textCursor().moveTo(visRow = row, col = col, scroll = False)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event : QMouseEvent):
@@ -1144,7 +1233,30 @@ class textEdit(QWidget):
             self.mouseMoved = True
             x = self.mouseX + self._scrollX - self.leftMargin()
             y = self.mouseY + self._scrollY - self.topMargin()
-            self.textCursor().moveTo(visRow = int(y / self.cellH), col = int(x / self.cellW + 1 / 2), scroll = False, Anchor = True)
+            row = int(y / self.cellH)
+            col = round(x / self.cellW)
+            if self.selectTransfer:
+                start = (self.textCursor().selectionStart().absoluteCoord().row(), self.textCursor().selectionStart().col())
+                stop = (self.textCursor().selectionStop().absoluteCoord().row(), self.textCursor().selectionStop().col())
+                if start <= (row, col) <= stop:
+                    event.accept()
+                    return
+                else:
+                    cursor = None
+                    for curs in self.extraCursors:
+                        if curs.type == dummyCursorType.TRANSFER:
+                            cursor = curs
+                            break
+                    if not cursor:
+                        cursor = dummyCursor(editor = self, doc = self.document(), cursType = dummyCursorType.TRANSFER)
+                        cursor.cursVisible = True
+                        self.extraCursors.append(cursor)
+                    cursor.moveTo(visRow = row, col = col)
+                    self.update()
+                    event.accept()
+                    return
+
+            self.textCursor().moveTo(visRow = row, col = col, scroll = False, Anchor = True)
 
         elif self.doubleClicked:
             self.mouseMoved = True
@@ -1210,15 +1322,46 @@ class textEdit(QWidget):
     def mouseReleaseEvent(self, event : QMouseEvent):
         self.mouseX = event.position().x()
         self.mouseY = event.position().y()
+        x = self.mouseX + self._scrollX - self.leftMargin()
+        y = self.mouseY + self._scrollY - self.topMargin()
+        row = int(y / self.cellH)
+        col = round(x / self.cellW)
         if self.textCursor().hasSelection() and not self.mouseMoved and not self.doubleClicked and not self.trippleClicked and not self.quadClicked:
+            if self.textCursor().hasSelection():
+                start = (self.textCursor().selectionStart().absoluteCoord().row(), self.textCursor().selectionStart().col())
+                stop = (self.textCursor().selectionStop().absoluteCoord().row(), self.textCursor().selectionStop().col())
+                if start <= (row, col) <= stop:
+                    self.textCursor().moveTo(visRow = row, col = col, scroll = False)
             self.textCursor().selection().reset()
             self.update()
+        elif self.textCursor().hasSelection() and self.mouseMoved and self.selectTransfer:
+            start = (self.textCursor().selectionStart().absoluteCoord().row(), self.textCursor().selectionStart().col())
+            stop = (self.textCursor().selectionStop().absoluteCoord().row(), self.textCursor().selectionStop().col())
+            if (row, col) < start or (row, col) > stop:
+                cursor = None
+                cursID = 0
+                for idx, curs in enumerate(self.extraCursors):
+                    if curs.type == dummyCursorType.TRANSFER:
+                        cursor = curs
+                        cursID = idx
+                if cursor:
+                    text  = self.textCursor().selectedText()
+                    start = (self.textCursor().selectionStart().visibleCoord().row(), self.textCursor().selectionStart().col())
+                    stop  = (self.textCursor().selectionStop().visibleCoord().row(), self.textCursor().selectionStop().col())
+                    if (row, col) < start:
+                        self.beginEdit()
+                        self.deleteSelection(dispatch = True)
+                        self.textCursor().moveTo(visRow = row, col = col, sync = False)
+                        self.pasteText(text = text, Anchor = True, dispatch = True)
+                        self.endEdit()
+                    self.extraCursors.pop(cursID)
 
         self.doubleClicked = False
         self.trippleClicked = False
         self.quadClicked = False
         self.mousePressed = False
         self.mouseMoved = False
+        self.selectTransfer = False
         event.accept()
 
     def mouseDoubleClickEvent(self, event : QMouseEvent):
@@ -1424,8 +1567,9 @@ class deleteText(command):
         visRow = self.document.absoluteToVisible(self.position[0])
         visCol = self.position[1]
         visPosition = textPosition(row = visRow, col = visCol)
+        self.editor.textCursor().moveTo(visRow = visRow, col = visCol, sync = False)
         for _ in range(nDel):
-            self.editor.deleteRight(position = visPosition)
+            self.editor.deleteRight()
 
 
 class cutText(command):
@@ -1448,7 +1592,7 @@ class cutText(command):
         cursor = self.editor.textCursor()
         cursor.moveTo(visRow = self.start_Vis_Row, col = self.position[1])
         cursor.moveTo(visRow = self.end_Vis_Row, col = self.endCol, Anchor = True)
-        self.editor.copySelection()
+        # self.editor.copySelection()
         self.editor.deleteSelection()
 
     def config(self):
@@ -1480,7 +1624,7 @@ class pasteText(command):
         cursor = self.editor.textCursor()
         cursor.moveTo(visRow = self.start_Vis_Row, col = self.position[1])
         cursor.moveTo(visRow = self.end_Vis_Row, col = self.endCol, Anchor = True)
-        self.editor.copySelection()
+        # self.editor.copySelection()
         self.editor.deleteSelection()
 
     def redo(self):
@@ -2062,6 +2206,14 @@ class TextCursor:
             return string
         else:
             return None
+
+
+class dummyCursor(TextCursor):
+    def __init__(self, editor, doc, cursType : dummyCursorType = dummyCursorType.UNASSIGNED):
+        super().__init__(editor, doc)
+        self.type = cursType
+        self.cursVisible = False
+        self.selectionVisible = False
 
 
 class textSelection:
