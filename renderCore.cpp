@@ -153,7 +153,7 @@ void rebuildTraceMap(
             max    .push_back(   postYPx  );
         }
 
-        painter.setRenderHint(QPainter::Antialiasing, false);
+        painter.setRenderHint(QPainter::Antialiasing, true);
         painter.setPen(thickPen);
 
         QList<QPointF> points;

@@ -18,6 +18,7 @@ import numpy as np
 from supernovaEngine import *
 from epsilonMajoris import *
 from editTabs import *
+from data import *
 
 
 class MainWindow(QMainWindow):
@@ -47,17 +48,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(tabs)
 
 
-        self.x        = np.linspace(0,10,200000)
-        self.signal1  = np.sin(self.x); """+ np.sin(100 * self.x)"""
-        self.signal2  = np.cos(self.x)
-        self.signal2  = np.ones(len(self.x))
-        self.signal2[9990:10010]  -= 1
-        self.signal2[19980:20000] += 2
-        self.signal3  = np.sinc(self.x)
-        self.signal4  = self.signal1**3
-        self.signal5  = np.sqrt(np.sqrt(self.x))
-        T = 0.1
-        self.signal6  = self.tanh_square_wave(self.x, T)
+        self.x        = time
+        self.signal1  = v_p0
+        self.signal2  = v_vctrl
+        self.signal3  = v_vddvco
 
 
         self.wavewindow   = WaveWindow(self.ui.WaveWindow)
@@ -66,8 +60,8 @@ class MainWindow(QMainWindow):
         # self.wavewindow.AddSignal(self.signal2, "signal2")
         # self.wavewindow.AddSignal(self.signal3, "signal3")
         # self.wavewindow.AddSignal(self.signal4, "signal4")
-        # self.wavewindow.AddSignal(self.signal5, "signal5")
-        self.wavewindow.AddSignal(self.signal6, "signal6")
+        self.wavewindow.AddSignal(self.signal2, "signal2")
+        self.wavewindow.AddSignal(self.signal3, "signal3")
         # self.wavewindow.AddSignal(self.signal6**2, "signal7")
 
 
