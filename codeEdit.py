@@ -123,6 +123,7 @@ class textEdit(QWidget):
         self._document = textDocument()
         self._Cursor = TextCursor(editor = self, doc = self.document())
         self.extraCursors : list[dummyCursor] = []
+        self.transferCurs : dummyCursor | None = None
         self.editFlag = False
 
         self.Font = QFont()
@@ -296,16 +297,15 @@ class textEdit(QWidget):
                     painter.drawLine(x, y + 1.2, x, y + self.cellH - 1.2)
     
         if self.hasFocus():
-            for curs in self.extraCursors:
-                if curs.type == dummyCursorType.TRANSFER and self.selectTransfer:
-                    cursorPen = QPen(QColor(200, 200, 200, 255), self.cursWidth)
-                    cursorPen.setDashPattern([0.5, 1.5])
-                    painter.setPen(cursorPen)
-                    x = curs.visibleCoord().col() * self.cellW + self.leftMargin() - self._scrollX
-                    y = curs.visibleCoord().row() * self.cellH + self.topMargin() - self._scrollY
-                    if x == 0: x = 1
-                    painter.drawLine(x, y + 1.2, x, y + self.cellH - 0.2)
-                    cursorPen.setStyle(Qt.PenStyle.SolidLine)
+            if (self.transferCurs is not None) and (self.transferCurs.type == dummyCursorType.TRANSFER) and self.selectTransfer:
+                cursorPen = QPen(QColor(200, 200, 200, 255), self.cursWidth)
+                cursorPen.setDashPattern([0.5, 1.5])
+                painter.setPen(cursorPen)
+                x = self.transferCurs.visibleCoord().col() * self.cellW + self.leftMargin() - self._scrollX
+                y = self.transferCurs.visibleCoord().row() * self.cellH + self.topMargin() - self._scrollY
+                if x == 0: x = 1
+                painter.drawLine(x, y + 1.2, x, y + self.cellH - 0.2)
+                cursorPen.setStyle(Qt.PenStyle.SolidLine)
 
 
         self.toggle = False
@@ -537,7 +537,7 @@ class textEdit(QWidget):
     def rightMargin(self) : return self._rightMargin
     def bottomMargin(self): return self._bottomMargin
 
-    def newLine(self, visLineNo = None, enumerate = True, dispatch = False):
+    def newLine(self, visPosition : textPosition | tuple | None = None, enumerate = True, dispatch = False):
         maxconfig = False
         cursor = self.textCursor()
         doc = self.document()
@@ -545,17 +545,23 @@ class textEdit(QWidget):
         if cursor.block().totalCharacters() >= self.longLine:
             maxconfig = True
 
-        if visLineNo is None:
+        if visPosition is None:
             visLineNo = cursor.visibleCoord().row() + 1
             col = cursor.visibleCoord().col()
             absLineNo = self.textCursor().Coord().visibleToAbsolute(visLineNo - 1) + 1
-        else:
+        elif isinstance(visPosition, textPosition):
+            visLineNo = visPosition.row()
+            col = visPosition.col()
             absLineNo = self.textCursor().Coord().visibleToAbsolute(visLineNo) + 1
             visLineNo += 1
-            if visLineNo == cursor.visibleCoord().row() + 1:
-                col = cursor.visibleCoord().col()
+        elif isinstance(visPosition, tuple):
+            visLineNo = visPosition[0]
+            absLineNo = self.textCursor().Coord().visibleToAbsolute(visLineNo) + 1
+            if len(visPosition) == 2:
+                col = visPosition[1]
             else:
-                col = doc.findBlockByNumber(absLineNo - 1).totalCharacters()
+                col = self.document().findBlockByNumber(absLineNo)
+            visLineNo += 1
 
         prevBlock = doc.findBlockByNumber(absLineNo - 1)
 
@@ -790,15 +796,19 @@ class textEdit(QWidget):
         prevX = self._scrollX
         prevY = self._scrollY
 
-        if self.mouseX < self.leftMargin():
+        if self.mouseX < self.leftMargin() + 2:
             # dist = self.leftMargin() - self.mouseX
             # self._scrollX -= dist * 2
-            if not self.textCursor().isAtBlockStart():
+            if self.selectTransfer:
+                if self.transferCurs.isAtBlockStart(): self.transferCurs.navLeft()
+            elif not self.textCursor().isAtBlockStart():
                 self.textCursor().navLeft(Anchor = True)
-        elif self.mouseX > self.width() - self.rightMargin():
+        elif self.mouseX > self.width() - self.rightMargin() - 2:
             # dist = self.mouseX - self.width() + self.rightMargin()
             # self._scrollX += dist * 2
-            if not self.textCursor().isAtBlockEnd():
+            if self.selectTransfer:
+                if self.transferCurs.isAtBlockEnd(): self.transferCurs.navLeft()
+            elif not self.textCursor().isAtBlockEnd():
                 self.textCursor().navRight(Anchor = True)
         elif self.mouseY < self.topMargin():
             dist = self.topMargin() - self.mouseY
@@ -815,7 +825,8 @@ class textEdit(QWidget):
         if prevX != self._scrollX or prevY != self._scrollY:
             x = self.mouseX + self._scrollX
             y = self.mouseY + self._scrollY
-            self.textCursor().moveTo(visRow = int(y / self.cellH), col = int(x / self.cellW + 1 / 2), scroll = False, Anchor = True)
+            if self.selectTransfer: self.transferCurs.moveTo(visRow = int(y / self.cellH), col = int(x / self.cellW + 1 / 2), scroll = False)
+            else: self.textCursor().moveTo(visRow = int(y / self.cellH), col = int(x / self.cellW + 1 / 2), scroll = False, Anchor = True)
             self.update()
 
     def pasteText(self, text : str, absPosition : TextCursor | textPosition | None = None, Anchor = False, dispatch = False, debug = False):
@@ -844,11 +855,11 @@ class textEdit(QWidget):
         if debug: print("No of Pasted lines =", totalLines)
 
         for i, line in enumerate(reversed(lines)):
-            if debug:
-                self.debug(2373, 2386)
-                print("Line No =", i, "Line Text =", (line))
             if line:
                 self.insert(text = line, absPosition = absPosition, moveRight = False)
+            if debug:
+                print("Line No =", i, "Line Text =", (line))
+                self.debug(2380, 2398)
 
             if i < totalLines - 1:
                 nLine += 1
@@ -856,22 +867,20 @@ class textEdit(QWidget):
                     nLine = 0
                     self.update()
 
-                if debug:
-                    print("NewLine")
-                    self.debug(2373, 2386)
-
-                self.newLine(visLineNo=row, enumerate=False)
+                self.newLine(visPosition = (row, col), enumerate=False)
                 self.textCursor().navBlockEnd()
                 self.textCursor().navUp()
                 self.textCursor().moveToCol(col)
 
-                if debug: self.debug(2373, 2386)
+                if debug:
+                    print("NewLine")
+                    self.debug(2380, 2398)
 
         self.textCursor().navBlockEnd()
         self.textCursor().moveToCol(col)
         self.document().reEnumerate()
 
-        if debug: self.debug(2373, 2386)
+        if debug: self.debug(2380, 2398)
 
         nRows = text.count('\n')
         if nRows > 0:
@@ -890,7 +899,7 @@ class textEdit(QWidget):
             Anchor = Anchor
         )
 
-        if debug: self.debug(2373, 2386)
+        if debug: self.debug(2380, 2398)
 
         self.update()
 
@@ -1231,6 +1240,7 @@ class textEdit(QWidget):
         if event.button() == Qt.RightButton:
             self.showReason = True
             print(self.document().lineLog)
+            self.debug(2380, 2398)
         self.mouseX = event.position().x()
         self.mouseY = event.position().y()
         x = self.mouseX + self._scrollX - self.leftMargin()
@@ -1267,15 +1277,11 @@ class textEdit(QWidget):
                     event.accept()
                     return
                 else:
-                    cursor = None
-                    for curs in self.extraCursors:
-                        if curs.type == dummyCursorType.TRANSFER:
-                            cursor = curs
-                            break
-                    if not cursor:
+                    cursor = self.transferCurs
+                    if self.transferCurs is None:
                         cursor = dummyCursor(editor = self, doc = self.document(), cursType = dummyCursorType.TRANSFER)
                         cursor.cursVisible = True
-                        self.extraCursors.append(cursor)
+                        self.transferCurs = cursor
                     cursor.moveTo(visRow = row, col = col)
                     self.update()
                     event.accept()
@@ -1363,13 +1369,7 @@ class textEdit(QWidget):
             start = (self.textCursor().selectionStart().absoluteCoord().row(), self.textCursor().selectionStart().col())
             stop = (self.textCursor().selectionStop().absoluteCoord().row(), self.textCursor().selectionStop().col())
             if (row, col) < start or (row, col) > stop:
-                cursor = None
-                cursID = 0
-                for idx, curs in enumerate(self.extraCursors):
-                    if curs.type == dummyCursorType.TRANSFER:
-                        cursor = curs
-                        cursID = idx
-                if cursor:
+                if self.transferCurs:
                     text  = self.textCursor().selectedText()
                     print(repr(text))
                     start = (self.textCursor().selectionStart().visibleCoord().row(), self.textCursor().selectionStart().col())
@@ -1380,7 +1380,7 @@ class textEdit(QWidget):
                         self.textCursor().moveTo(visRow = row, col = col, sync = False)
                         self.pasteText(text = text, Anchor = True, dispatch = True)
                         self.endEdit()
-                    self.extraCursors.pop(cursID)
+                    self.transferCurs = None
 
         self.doubleClicked = False
         self.trippleClicked = False
@@ -1517,7 +1517,7 @@ class textEdit(QWidget):
             startRow = 0
         if stopRow is None:
             stopRow = self.document().totalBlocks()
-        nRows = stopRow - startRow
+        nRows = stopRow - startRow + 1
         blocks = self.document().blocks()[startRow:stopRow]
 
         if ancRow == cursRow and ancCol == cursCol:
@@ -1541,14 +1541,15 @@ class textEdit(QWidget):
                 if i < nRows - 1:
                     text += '\n'
         else:
-            for i, block in enumerate(self.document().blocks()):
+            for i, block in enumerate(blocks):
                 if i + startRow == cursRow:
                     text += (block.text()[:cursCol] + '|' + block.text()[cursCol:])
                 else:
                     text += block.text()
-                if i + startRow < nRows - 1:
+                if i < nRows - 1:
                     text += '\n'
         print(text)
+        print("=========================================================================")
 
 
 class command:
