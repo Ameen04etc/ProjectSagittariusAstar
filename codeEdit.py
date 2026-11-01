@@ -577,7 +577,7 @@ class textEdit(QWidget):
         if enumerate: doc.reEnumerate()
 
         if dispatch:
-            command = newLine(self, doc, (absLineNo, col))
+            command = newLineCommand(self, doc, (absLineNo, col))
             self.commandGroup.append(command)
             self.commandDispatch()
 
@@ -590,40 +590,51 @@ class textEdit(QWidget):
 
     def insert(self, text : str, absPosition : TextCursor | textPosition | None = None, moveRight = True):
         maxConfig = False
+        cursors : list[TextCursor] = []
 
         if absPosition is None:
-            absoluteRow = self.textCursor().absoluteCoord().row()
-            col = self.textCursor().Coord().col()
+            cursor = self.textCursor()
+            cursors.append(cursor)
+            cursors.extend(self.extraCursors)
+            # absoluteRow = self.textCursor().absoluteCoord().row()
+            # col = self.textCursor().Coord().col()
         else:
             if isinstance(absPosition, textPosition):
                 absoluteRow = absPosition.row()
                 col = absPosition.col()
+                cursor = TextCursor(editor = self, doc = self.document(), absRow = absoluteRow, absCol = col)
+                cursors.append(cursor)
             elif isinstance(absPosition, TextCursor):
                 absoluteRow = absPosition.absoluteCoord().row()
                 col = absPosition.Coord().col()
+                cursor = TextCursor(editor = self, doc = self.document(), absRow = absoluteRow, absCol = col)
+                cursors.append(cursor)
 
-        block = self.document().findBlockByNumber(absoluteRow)
-        if self.longLine <= block.totalCharacters():
-            maxConfig = True
+        for curs in cursors:
+            curs.insertText(text = text, moveRight = moveRight)
 
-        block.setText(block.text()[:col] + text + block.text()[col:])
+        # block = self.document().findBlockByNumber(absoluteRow)
+        # if self.longLine <= block.totalCharacters():
+        #     maxConfig = True
 
-        length = len(text)
-        if moveRight:
-            if length == 1:
-                self.textCursor().navRight()
-            else:
-                self.textCursor().moveToCol(col + length)
-        self.document().lineLog[absoluteRow] += length
+        # block.setText(block.text()[:col] + text + block.text()[col:])
 
-        if self.document().lineLog[absoluteRow] > self.longLine:
-            self.longLine = self.document().lineLog[absoluteRow]
-            self._maxScrollX = (self.longLine + 2) * self.cellW - self.prevW
-            maxConfig = False
-        self.update()
+        # length = len(text)
+        # if moveRight:
+        #     if length == 1:
+        #         self.textCursor().navRight()
+        #     else:
+        #         self.textCursor().moveToCol(col + length)
+        # self.document().lineLog[absoluteRow] += length
 
-        if maxConfig:
-            QTimer.singleShot(100, self.maxScrollConfig)
+        # if self.document().lineLog[absoluteRow] > self.longLine:
+        #     self.longLine = self.document().lineLog[absoluteRow]
+        #     self._maxScrollX = (self.longLine + 2) * self.cellW - self.prevW
+        #     maxConfig = False
+        # self.update()
+
+        # if maxConfig:
+        #     QTimer.singleShot(100, self.maxScrollConfig)
 
     def deleteLeft(self, visPosition : textPosition | None = None, dispatch = False):
         maxConfig = False
@@ -643,7 +654,7 @@ class textEdit(QWidget):
         if col > 0:
             if dispatch:
                 ch = block.text()[col - 1]
-                command = deleteText(self, self.document(), (abs_row, col - 1), ch)
+                command = deleteTextCommand(self, self.document(), (abs_row, col - 1), ch)
                 self.commandGroup.append(command)
                 self.UndRedTimer.start(500)
 
@@ -653,7 +664,7 @@ class textEdit(QWidget):
         elif row > 0:
             if dispatch:
                 self.commandDispatch()
-                command = deleteLine(self, self.document(), abs_row)
+                command = deleteLineCommand(self, self.document(), abs_row)
                 self.commandGroup.append(command)
                 self.commandDispatch()
 
@@ -699,7 +710,7 @@ class textEdit(QWidget):
         if col < blockLength:
             if dispatch:
                 ch = block.text()[col]
-                command = deleteText(self, self.document(), (abs_row, col), ch)
+                command = deleteTextCommand(self, self.document(), (abs_row, col), ch)
                 self.commandGroup.append(command)
                 self.UndRedTimer.start(500)
 
@@ -708,7 +719,7 @@ class textEdit(QWidget):
         elif abs_row < len(self.document().blocks()) - 1:
             if dispatch:
                 self.commandDispatch()
-                command = deleteLine(self, self.document(), abs_row + 1)
+                command = deleteLineCommand(self, self.document(), abs_row + 1)
                 self.commandGroup.append(command)
                 self.commandDispatch()
 
@@ -779,7 +790,7 @@ class textEdit(QWidget):
             if dispatch:
                 self.commandDispatch()
                 absPosition = (self.textCursor().absoluteCoord().row(), self.textCursor().Coord().col())
-                command = deleteText(editor = self, document = self.document(), absPosition = absPosition, selection = True, text = text)
+                command = deleteTextCommand(editor = self, document = self.document(), absPosition = absPosition, selection = True, text = text)
                 self.commandGroup.append(command)
                 self.commandDispatch()
 
@@ -904,7 +915,7 @@ class textEdit(QWidget):
         self.update()
 
         if dispatch:
-            command = pasteText(editor = self, document = self.document(), absPosition = position, text = text)
+            command = pasteCommand(editor = self, document = self.document(), absPosition = position, text = text)
             self.commandGroup.append(command)
             self.commandDispatch()
 
@@ -1060,7 +1071,7 @@ class textEdit(QWidget):
                     self.copySelection()
                     self.deleteSelection()
 
-                command = cutText(self, self.document(), absPosition, text)
+                command = cutCommand(self, self.document(), absPosition, text)
                 self.commandGroup.append(command)
                 self.commandDispatch()
                 self.update()
@@ -1070,11 +1081,11 @@ class textEdit(QWidget):
                 # print(repr(text))
                 if self.textCursor().hasSelection():
                     absPosition = (self.textCursor().selectionStart().absoluteCoord().row(), self.textCursor().selectionStart().col())
-                    command = deleteText(self, self.document(), absPosition, self.textCursor().selectedText())
+                    command = deleteTextCommand(self, self.document(), absPosition, self.textCursor().selectedText())
                     self.commandGroup.append(command)
                     self.deleteSelection()
                 absPosition = (self.textCursor().absoluteCoord().row(), self.textCursor().Coord().col())
-                command2 = pasteText(self, self.document(), absPosition, text)
+                command2 = pasteCommand(self, self.document(), absPosition, text)
                 self.commandGroup.append(command2)
                 self.pasteText(text = text)
                 self.commandDispatch()
@@ -1096,7 +1107,7 @@ class textEdit(QWidget):
                 self.commandDispatch()
                 text = self.textCursor().selectedText()
                 absPosition = (self.textCursor().selectionStart().absoluteCoord().row(), self.textCursor().selectionStart().col())
-                command = deleteText(editor = self, document = self.document(), absPosition = absPosition, text = text)
+                command = deleteTextCommand(editor = self, document = self.document(), absPosition = absPosition, text = text)
                 self.commandGroup.append(command)
                 self.commandDispatch()
 
@@ -1107,7 +1118,7 @@ class textEdit(QWidget):
                 self.commandDispatch()
                 text = self.textCursor().selectedText()
                 absPosition = (self.textCursor().selectionStart().absoluteCoord().row(), self.textCursor().selectionStart().col())
-                command = deleteText(editor = self, document = self.document(), absPosition = absPosition, text = text)
+                command = deleteTextCommand(editor = self, document = self.document(), absPosition = absPosition, text = text)
                 self.commandGroup.append(command)
                 self.commandDispatch()
 
@@ -1146,7 +1157,7 @@ class textEdit(QWidget):
                 self.commandDispatch()
                 text = self.textCursor().selectedText()
                 absPosition = (self.textCursor().selectionStart().absoluteCoord().row(), self.textCursor().selectionStart().col())
-                command = deleteText(editor = self, document = self.document(), absPosition = absPosition, text = text, selection = True)
+                command = deleteTextCommand(editor = self, document = self.document(), absPosition = absPosition, text = text, selection = True)
                 self.commandGroup.append(command)
                 self.deleteSelection()
             self.newLine(dispatch = True)
@@ -1156,12 +1167,12 @@ class textEdit(QWidget):
                 self.commandDispatch()
                 text = self.textCursor().selectedText()
                 absPosition = (self.textCursor().selectionStart().absoluteCoord().row(), self.textCursor().selectionStart().col())
-                command = deleteText(editor = self, document = self.document(), absPosition = absPosition, text = text, selection = True)
+                command = deleteTextCommand(editor = self, document = self.document(), absPosition = absPosition, text = text, selection = True)
                 self.commandGroup.append(command)
                 self.commandDispatch()
                 self.deleteSelection()
             else:
-                if self.commandGroup and not isinstance(self.commandGroup[-1], deleteText): self.commandDispatch()
+                if self.commandGroup and not isinstance(self.commandGroup[-1], deleteTextCommand): self.commandDispatch()
                 self.deleteLeft(dispatch = True)
 
         elif event.key() == Qt.Key.Key_Delete:
@@ -1169,12 +1180,12 @@ class textEdit(QWidget):
                 self.commandDispatch()
                 text = self.textCursor().selectedText()
                 absPosition = (self.textCursor().selectionStart().absoluteCoord().row(), self.textCursor().selectionStart().col())
-                command = deleteText(editor = self, document = self.document(), absPosition = absPosition, text = text, selection = True)
+                command = deleteTextCommand(editor = self, document = self.document(), absPosition = absPosition, text = text, selection = True)
                 self.commandGroup.append(command)
                 self.commandDispatch()
                 self.deleteSelection()
             else:
-                if self.commandGroup and not isinstance(self.commandGroup[-1], deleteText): self.commandDispatch()
+                if self.commandGroup and not isinstance(self.commandGroup[-1], deleteTextCommand): self.commandDispatch()
                 self.deleteRight(dispatch = True)
 
         elif event.key() == Qt.Key.Key_Shift:
@@ -1187,7 +1198,7 @@ class textEdit(QWidget):
             tab = '    '
             self.commandDispatch()
             absPosition = (self.textCursor().absoluteCoord().row(), self.textCursor().Coord().col())
-            command = insertText(editor = self, document = self.document(), absPosition = absPosition, text = tab)
+            command = insertTextCommand(editor = self, document = self.document(), absPosition = absPosition, text = tab)
             self.commandGroup.append(command)
             self.commandDispatch()
 
@@ -1201,16 +1212,16 @@ class textEdit(QWidget):
             text = event.text()
             absPosition = (self.textCursor().absoluteCoord().row(), self.textCursor().Coord().col())
 
-            if self.commandGroup and not isinstance(self.commandGroup[-1], insertText):
+            if self.commandGroup and not isinstance(self.commandGroup[-1], insertTextCommand):
                 self.commandDispatch()
 
             if self.textCursor().hasSelection():
                 self.commandDispatch()
-                command = deleteText(self, self.document(), absPosition, self.textCursor().selectedText(), True)
+                command = deleteTextCommand(self, self.document(), absPosition, self.textCursor().selectedText(), True)
                 self.commandGroup.append(command)
                 self.deleteSelection()
 
-            command2 = insertText(editor = self, document = self.document(), absPosition = absPosition, text = text)
+            command2 = insertTextCommand(editor = self, document = self.document(), absPosition = absPosition, text = text)
             self.commandGroup.append(command2)
             self.UndRedTimer.start(500)
 
@@ -1226,6 +1237,9 @@ class textEdit(QWidget):
         super().keyReleaseEvent(event)
 
     def mousePressEvent(self, event : QMouseEvent):
+        if self.extraCursors and not self.controlModifier:
+            self.extraCursors.clear()
+
         if self.trippleClickEN:
             self.trippleClicked = True
             self.textCursor().navBlockStart()
@@ -1560,7 +1574,7 @@ class command:
         raise NotImplementedError
 
 
-class insertText(command):
+class insertTextCommand(command):
     def __init__(self, editor : textEdit, document : textDocument, absPosition : tuple, text : str):
         super().__init__()
         self.editor   = editor
@@ -1582,7 +1596,7 @@ class insertText(command):
         self.editor.pasteText(text = self.text, absPosition = absPosition)
 
 
-class deleteText(command):
+class deleteTextCommand(command):
     def __init__(self, editor : textEdit, document : textDocument, absPosition : tuple, text : str, selection = False):
         super().__init__()
         self.editor   = editor
@@ -1606,7 +1620,7 @@ class deleteText(command):
             self.editor.deleteRight()
 
 
-class cutText(command):
+class cutCommand(command):
     def __init__(self, editor : textEdit, document : textDocument, absPosition : tuple, text : str):
         super().__init__()
         self.editor   = editor
@@ -1645,7 +1659,7 @@ class cutText(command):
         self.endCol = visCol + nCols
 
 
-class pasteText(command):
+class pasteCommand(command):
     def __init__(self, editor : textEdit, document : textDocument, absPosition : tuple, text : str):
         super().__init__()
         self.editor   = editor
@@ -1684,7 +1698,7 @@ class pasteText(command):
         self.endCol = visCol + nCols
 
 
-class newLine(command):
+class newLineCommand(command):
     def __init__(self, editor : textEdit, document : textDocument, absPosition : tuple):
         super().__init__()
         self.editor   = editor
@@ -1715,7 +1729,7 @@ class newLine(command):
         self.document.reEnumerate()
 
 
-class deleteLine(command):
+class deleteLineCommand(command):
     def __init__(self, editor : textEdit, document : textDocument, absRow):
         super().__init__()
         self.editor   = editor
@@ -1932,12 +1946,22 @@ class textCell:
 
 class TextCursor:
 
-    def __init__(self, editor : textEdit, doc : textDocument, row = 0, col = 0):
+    def __init__(self, editor : textEdit, doc : textDocument, visRow = None, visCol = None, absRow = None, absCol = None):
         self._doc = doc
         self._edit = editor
-        self._coord = pairedPosition(doc = self._doc)
-        self._anchor = pairedPosition(doc = self._doc)
-        self._storedCoord = pairedPosition(doc = self._doc)
+        if visRow is not None and visCol is not None:
+            self._coord = pairedPosition(doc = self._doc, visRow = visRow, visCol = visCol)
+            self._anchor = pairedPosition(doc = self._doc, visRow = visRow, visCol = visCol)
+            self._storedCoord = pairedPosition(doc = self._doc, visRow = visRow, visCol = visCol)
+        elif absRow is not None and absCol is not None:
+            self._coord = pairedPosition(doc = self._doc, absRow = absRow, absCol = absCol)
+            self._anchor = pairedPosition(doc = self._doc, absRow = absRow, absCol = absCol)
+            self._storedCoord = pairedPosition(doc = self._doc, absRow = absRow, absCol = absCol)
+        else:
+            self._coord = pairedPosition(doc = self._doc)
+            self._anchor = pairedPosition(doc = self._doc)
+            self._storedCoord = pairedPosition(doc = self._doc)
+
         self._selection = textSelection(doc = self._doc)
 
     def editor(self):return self._edit
@@ -2010,6 +2034,35 @@ class TextCursor:
         if not scroll:
             self.editor()._scrollX = prev_x
             self.editor()._scrollY = prev_y
+
+    def insertText(self, text : str, moveRight = True):
+        maxConfig = False
+
+        absoluteRow = self.absoluteCoord().row()
+        col = self.Coord().col()
+
+        block = self.document().findBlockByNumber(absoluteRow)
+        if self.editor().longLine <= block.totalCharacters():
+            maxConfig = True
+
+        block.setText(block.text()[:col] + text + block.text()[col:])
+
+        length = len(text)
+        if moveRight:
+            if length == 1:
+                self.navRight()
+            else:
+                self.moveToCol(col + length)
+        self.document().lineLog[absoluteRow] += length
+
+        if self.document().lineLog[absoluteRow] > self.editor().longLine:
+            self.editor().longLine = self.document().lineLog[absoluteRow]
+            self.editor()._maxScrollX = (self.editor().longLine + 2) * self.editor().cellW - self.editor().prevW
+            maxConfig = False
+        self.editor().update()
+
+        if maxConfig:
+            QTimer.singleShot(100, self.editor().maxScrollConfig)
 
     def navLeft(self, Anchor = False):
         if self.visibleCoord().col() > 0:
@@ -2277,10 +2330,14 @@ class textSelection:
 
 class pairedPosition:
 
-    def __init__(self, doc : textDocument):
+    def __init__(self, doc : textDocument, visRow = None, visCol = None, absRow = None, absCol = None):
+        self._doc     = doc
         self._visible = textPosition()
         self._abslute = textPosition()
-        self._doc     = doc
+        if visRow is not None and visCol is not None:
+            self.set_Visible_Coord(row = visRow, col = visCol)
+        elif absRow is not None and absCol is not None:
+            self.set_Absolute_Coord(row = absRow, col = absCol)
 
     def document(self)      -> textDocument: return self._doc
     def visibleCoord(self)  -> textPosition: return self._visible
