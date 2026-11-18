@@ -105,6 +105,13 @@ def angle(v1 : tuple, v2 : tuple) -> float:
     return np.degrees(np.arccos(cos_theta))
 
 
+def cursSort(cursList : list[TextCursor], reverse = False):
+    cursList.sort(key = lambda cursor: (
+        cursor.absoluteCoord().row(),
+        cursor.Coord().col()
+    ), reverse = reverse)
+
+
 class CoordinateType(Enum):
     VISIBLE = auto()
     ABSOLUTE = auto()
@@ -538,31 +545,16 @@ class textEdit(QWidget):
     def bottomMargin(self): return self._bottomMargin
 
     def newLine(self, visPosition : textPosition | tuple | None = None, enumerate = True, dispatch = False):
-        # maxconfig = False
-        cursors : list[TextCursor] = []
-        cursor = self.textCursor()
-        doc = self.document()
-
-        # if cursor.block().totalCharacters() >= self.longLine:
-        #     maxconfig = True
-
         if visPosition is None:
-            visRow = cursor.visibleCoord().row()
-            col = cursor.visibleCoord().col()
-            absRow = self.textCursor().Coord().visibleToAbsolute(visRow)
-
-            cursor = self.textCursor()
-            cursors.append(cursor)
-            cursors.extend(self.extraCursors)
+            self.textCursor().newLine(enumerate = enumerate)
 
         elif isinstance(visPosition, textPosition):
             visRow = visPosition.row()
             col = visPosition.col()
             cursor = TextCursor(editor = self, doc = self.document(), visRow = visRow, visCol = col)
-            cursors.append(cursor)
+            self.extraCursors.append(cursor)
+            self.textCursor().newLine(cursor = cursor, enumerate = enumerate)
 
-            col = visPosition.col()
-            absRow = self.textCursor().Coord().visibleToAbsolute(visRow)
         elif isinstance(visPosition, tuple):
             visRow = visPosition[0]
             if len(visPosition) == 2:
@@ -570,56 +562,10 @@ class textEdit(QWidget):
             else:
                 col = self.document().findBlockByVisibleNumber(visRow)
             cursor = TextCursor(editor = self, doc = self.document(), visRow = visRow, visCol = col)
-            cursors.append(cursor)
+            self.extraCursors.append(cursor)
+            self.textCursor().newLine(cursor = cursor, enumerate = enumerate)
 
-            absRow = self.textCursor().Coord().visibleToAbsolute(visRow)
-            if len(visPosition) == 2:
-                col = visPosition[1]
-            else:
-                col = self.document().findBlockByNumber(absRow)
-
-        for curs in cursors:
-            curs.newLine(enumerate = enumerate)
-            if dispatch:
-                command = newLineCommand(self, doc, (curs.absoluteCoord().row(), curs.Coord().col()))
-                self.commandGroup.append(command)
-            for other in cursors:
-                if other == curs: continue
-                elif other.absoluteCoord().row() < curs.absoluteCoord().row(): continue
-                elif other.absoluteCoord().row() == curs.absoluteCoord().row():
-                    if other.Coord().col() <= curs.Coord().col(): continue
-                    else:
-                        newRow = other.absoluteCoord().row() + 1
-                        newCol = other.Coord().col() - curs.Coord().col()
-                        other.Coord().set_Absolute_Coord(row = newRow, col = newCol)
-
-        if dispatch:
-            self.commandDispatch()
-
-        # prevBlock = doc.findBlockByNumber(absRow)
-
-        # block = textBlock(doc, blockNumber = absRow + 1)
-        # block.setText(prevBlock.text()[col:])
-        # prevBlock.setText(prevBlock.text()[:col])
-
-        # self.document().blocks().insert(absRow, block)
-        # self.document().visibleBlocks().insert(visLineNo + 1, block)
-        # self.document().lineLog.insert(absRow, block.totalCharacters())
-        # self.document().lineLog[absRow - 1] = col
-
-        # if enumerate: doc.reEnumerate()
-
-        # if dispatch:
-        #     command = newLineCommand(self, doc, (absRow, col))
-        #     self.commandGroup.append(command)
-        #     self.commandDispatch()
-
-        # self.textCursor().moveTo(visLineNo + 1, 0)
-        # self._maxScrollY += self.cellH
-        # self.update()
-
-        # if maxconfig:
-        #     QTimer.singleShot(100, self.maxScrollConfig)
+        if dispatch: self.commandDispatch()
 
     def insert(self, text : str, absPosition : TextCursor | textPosition | None = None, moveRight = True):
         # maxConfig = False
@@ -1749,6 +1695,8 @@ class newLineCommand(command):
         del self.document.blocks()[self.absRow + 1]
         del self.document.visibleBlocks()[self.visRow + 1]
         self.document.reEnumerate()
+        self.editor.textCursor().moveTo(visRow = self.visRow, col = 0)
+        self.editor.textCursor().navBlockEnd()
 
     def redo(self):
         prevBlock = self.document.findBlockByNumber(self.absRow)
@@ -1757,9 +1705,9 @@ class newLineCommand(command):
         prevBlock.setText(prevBlock.text()[:self.col])
         self.document.blocks().insert(self.absRow + 1, block)
         self.document.visibleBlocks().insert(self.visRow + 1, block)
+        self.document.reEnumerate()
         self.editor.textCursor().moveTo(visRow = self.visRow + 1, col = 0)
         print("visRow =", self.visRow, "position =", self.editor.textCursor().visibleCoord().row())
-        self.document.reEnumerate()
 
 
 class deleteLineCommand(command):
@@ -2097,33 +2045,53 @@ class TextCursor:
         if maxConfig:
             QTimer.singleShot(100, self.editor().maxScrollConfig)
 
-    def newLine(self, enumerate = True):
+    def newLine(self, cursor : TextCursor | None = None, enumerate = True):
         maxconfig = False
         doc = self.document()
 
-        if self.block().totalCharacters() >= self.longLine:
-            maxconfig = True
+        cursList = self.editor().extraCursors.copy()
+        cursList.append(self.editor().textCursor())
+        if cursor is not None and cursor not in cursList: cursList.append(cursor)
+        cursSort(cursList = cursList)
 
-        visLineNo = self.visibleCoord().row() + 1
-        col = self.visibleCoord().col()
-        absLineNo = self.Coord().visibleToAbsolute(visLineNo - 1) + 1
+        if cursor is not None:
+            idx = cursList.index(cursor)
+            cursList = cursList[idx:]
 
-        prevBlock = doc.findBlockByNumber(absLineNo - 1)
+        if len(cursList) > 1: enumerate = True
 
-        block = textBlock(doc, blockNumber = absLineNo)
-        block.setText(prevBlock.text()[col:])
-        prevBlock.setText(prevBlock.text()[:col])
+        i = 0
+        for cursor in cursList:
+            if not maxconfig and cursor.block().totalCharacters() >= self.editor().longLine:
+                maxconfig = True
 
-        self.document().blocks().insert(absLineNo, block)
-        self.document().visibleBlocks().insert(visLineNo, block)
-        self.document().lineLog.insert(absLineNo, block.totalCharacters())
-        self.document().lineLog[absLineNo - 1] = col
+            if i != 0: cursor.Coord().set_Absolute_Row(cursor.absoluteCoord().row() + i)
 
-        if enumerate: doc.reEnumerate()
+            visRow = cursor.visibleCoord().row()
+            col = cursor.visibleCoord().col()
+            absRow = cursor.Coord().visibleToAbsolute(visRow)
 
-        self.moveTo(visLineNo, 0)
-        self.editor()._maxScrollY += self.editor().cellH
-        self.editor().update()
+            command = newLineCommand(self.editor(), doc, (cursor.absoluteCoord().row(), cursor.Coord().col()))
+            self.editor().commandGroup.append(command)
+
+            prevBlock = doc.findBlockByNumber(absRow)
+
+            block = textBlock(doc, blockNumber = absRow + 1)
+            block.setText(prevBlock.text()[col:])
+            prevBlock.setText(prevBlock.text()[:col])
+
+            self.document().blocks().insert(absRow + 1, block)
+            self.document().visibleBlocks().insert(visRow + 1, block)
+            self.document().lineLog.insert(absRow + 1, block.totalCharacters())
+            self.document().lineLog[absRow] = col
+
+            if enumerate: doc.reEnumerate()
+
+            cursor.moveTo(visRow + 1, 0)
+            self.editor()._maxScrollY += self.editor().cellH
+            self.editor().update()
+
+            i += 1
 
         if maxconfig:
             QTimer.singleShot(100, self.editor().maxScrollConfig)
@@ -2210,6 +2178,7 @@ class TextCursor:
         lastBlock = self._doc.blocks()[-1]
         ipRow = visRow
         visRow = min(visRow, lastBlock.blockNumber())
+        print("move at =", visRow)
         visRow = max(0, visRow)
         totalCar = self._doc.blocks()[visRow].totalCharacters()
         if visRow == lastBlock.blockNumber() and ipRow != visRow:
